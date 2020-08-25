@@ -3,6 +3,7 @@
 module AST.Canonical
   ( Expr, Expr_(..)
   , CaseBranch(..)
+  , FieldUpdate(..)
   , CtorOpts(..)
   -- definitions
   , Def(..)
@@ -14,13 +15,14 @@ module AST.Canonical
   , Annotation(..)
   , Type(..)
   , AliasType(..)
+  , FieldType(..)
+  , fieldsToList
   -- modules
   , Module(..)
   , Alias(..)
   , Binop(..)
   , Union(..)
   , Ctor(..)
-  , Docs(..)
   , Exports(..)
   , Export(..)
   , Effects(..)
@@ -30,7 +32,7 @@ module AST.Canonical
   where
 
 {- Creating a canonical AST means finding the home module for all variables.
-So if you have L.map, you need to figure out that it is from the elm-lang/core
+So if you have L.map, you need to figure out that it is from the elm/core
 package in the List module.
 
 In later phases (e.g. type inference, exhaustiveness checking, optimization)
@@ -51,17 +53,18 @@ So it is clear why the data is kept around.
 
 import Control.Monad (liftM, liftM2, liftM3, liftM4, replicateM)
 import Data.Binary
-import qualified Data.ByteString as B
+import qualified Data.List as List
 import qualified Data.Map as Map
-import Data.Text (Text)
+import Data.Name (Name)
 
+import qualified AST.Source as Src
 import qualified AST.Utils.Binop as Binop
-import qualified AST.Module.Name as ModuleName
 import qualified AST.Utils.Shader as Shader
 import qualified Data.Index as Index
-import qualified Elm.Name as N
+import qualified Elm.Float as EF
+import qualified Elm.ModuleName as ModuleName
+import qualified Elm.String as ES
 import qualified Reporting.Annotation as A
-import qualified Reporting.Region as R
 
 
 
@@ -74,20 +77,20 @@ type Expr =
 
 -- CACHE Annotations for type inference
 data Expr_
-  = VarLocal N.Name
-  | VarTopLevel ModuleName.Canonical N.Name
-  | VarKernel N.Name N.Name
-  | VarForeign ModuleName.Canonical N.Name Annotation
-  | VarCtor CtorOpts ModuleName.Canonical N.Name Index.ZeroBased Annotation
-  | VarDebug ModuleName.Canonical N.Name Annotation
-  | VarOperator N.Name ModuleName.Canonical N.Name Annotation -- CACHE real name for optimization
-  | Chr Text
-  | Str Text
+  = VarLocal Name
+  | VarTopLevel ModuleName.Canonical Name
+  | VarKernel Name Name
+  | VarForeign ModuleName.Canonical Name Annotation
+  | VarCtor CtorOpts ModuleName.Canonical Name Index.ZeroBased Annotation
+  | VarDebug ModuleName.Canonical Name Annotation
+  | VarOperator Name ModuleName.Canonical Name Annotation -- CACHE real name for optimization
+  | Chr ES.String
+  | Str ES.String
   | Int Int
-  | Float Double
+  | Float EF.Float
   | List [Expr]
   | Negate Expr
-  | Binop N.Name ModuleName.Canonical N.Name Annotation Expr Expr -- CACHE real name for optimization
+  | Binop Name ModuleName.Canonical Name Annotation Expr Expr -- CACHE real name for optimization
   | Lambda [Pattern] Expr
   | Call Expr [Expr]
   | If [(Expr, Expr)] Expr
@@ -95,17 +98,21 @@ data Expr_
   | LetRec [Def] Expr
   | LetDestruct Pattern Expr Expr
   | Case Expr [CaseBranch]
-  | Accessor N.Name
-  | Access Expr N.Name
-  | Update Expr (Map.Map N.Name Expr)
-  | Record (Map.Map N.Name Expr)
+  | Accessor Name
+  | Access Expr (A.Located Name)
+  | Update Name Expr (Map.Map Name FieldUpdate)
+  | Record (Map.Map Name Expr)
   | Unit
   | Tuple Expr Expr (Maybe Expr)
-  | Shader Text Text Shader.Shader
+  | Shader Shader.Source Shader.Types
 
 
 data CaseBranch =
   CaseBranch Pattern Expr
+
+
+data FieldUpdate =
+  FieldUpdate A.Region Expr
 
 
 
@@ -113,8 +120,8 @@ data CaseBranch =
 
 
 data Def
-  = Def (A.Located N.Name) [Pattern] Expr
-  | TypedDef (A.Located N.Name) FreeVars [(Pattern, Type)] Expr Type
+  = Def (A.Located Name) [Pattern] Expr
+  | TypedDef (A.Located Name) FreeVars [(Pattern, Type)] Expr Type
 
 
 
@@ -123,7 +130,7 @@ data Def
 
 data Decls
   = Declare Def Decls
-  | DeclareRec [Def] Decls
+  | DeclareRec Def [Def] Decls
   | SaveTheEnvironment
 
 
@@ -137,21 +144,22 @@ type Pattern =
 
 data Pattern_
   = PAnything
-  | PVar N.Name
-  | PRecord [N.Name]
-  | PAlias Pattern N.Name
+  | PVar Name
+  | PRecord [Name]
+  | PAlias Pattern Name
   | PUnit
   | PTuple Pattern Pattern (Maybe Pattern)
   | PList [Pattern]
   | PCons Pattern Pattern
-  | PChr Text
-  | PStr Text
+  | PBool Union Bool
+  | PChr ES.String
+  | PStr ES.String
   | PInt Int
   | PCtor
       { _p_home :: ModuleName.Canonical
-      , _p_type :: N.Name
+      , _p_type :: Name
       , _p_union :: Union
-      , _p_name :: N.Name
+      , _p_name :: Name
       , _p_index :: Index.ZeroBased
       , _p_args :: [PatternCtorArg]
       }
@@ -174,24 +182,47 @@ data PatternCtorArg =
 
 
 data Annotation = Forall FreeVars Type
+  deriving (Eq)
 
 
-type FreeVars = Map.Map N.Name ()
+type FreeVars = Map.Map Name ()
 
 
 data Type
   = TLambda Type Type
-  | TVar N.Name
-  | TType ModuleName.Canonical N.Name [Type]
-  | TRecord (Map.Map N.Name Type) (Maybe N.Name)
+  | TVar Name
+  | TType ModuleName.Canonical Name [Type]
+  | TRecord (Map.Map Name FieldType) (Maybe Name)
   | TUnit
   | TTuple Type Type (Maybe Type)
-  | TAlias ModuleName.Canonical N.Name [(N.Name, Type)] AliasType
+  | TAlias ModuleName.Canonical Name [(Name, Type)] AliasType
+  deriving (Eq)
 
 
 data AliasType
   = Holey Type
   | Filled Type
+  deriving (Eq)
+
+
+data FieldType = FieldType {-# UNPACK #-} !Word16 Type
+  deriving (Eq)
+
+
+-- NOTE: The Word16 marks the source order, but it may not be available
+-- for every canonical type. For example, if the canonical type is inferred
+-- the orders will all be zeros.
+--
+fieldsToList :: Map.Map Name FieldType -> [(Name, Type)]
+fieldsToList fields =
+  let
+    getIndex (_, FieldType index _) =
+      index
+
+    dropIndex (name, FieldType _ tipe) =
+      (name, tipe)
+  in
+  map dropIndex (List.sortOn getIndex (Map.toList fields))
 
 
 
@@ -201,27 +232,32 @@ data AliasType
 data Module =
   Module
     { _name    :: ModuleName.Canonical
-    , _docs    :: Docs
     , _exports :: Exports
+    , _docs    :: Src.Docs
     , _decls   :: Decls
-    , _unions  :: Map.Map N.Name Union
-    , _aliases :: Map.Map N.Name Alias
-    , _binops  :: Map.Map N.Name Binop
+    , _unions  :: Map.Map Name Union
+    , _aliases :: Map.Map Name Alias
+    , _binops  :: Map.Map Name Binop
     , _effects :: Effects
     }
 
 
-data Alias = Alias [N.Name] Type (Maybe [(N.Name,Type)])
-data Binop = Binop_ Binop.Associativity Binop.Precedence N.Name
+data Alias = Alias [Name] Type
+  deriving (Eq)
+
+
+data Binop = Binop_ Binop.Associativity Binop.Precedence Name
+  deriving (Eq)
 
 
 data Union =
   Union
-    { _u_vars :: [N.Name]
+    { _u_vars :: [Name]
     , _u_alts :: [Ctor]
     , _u_numAlts :: Int -- CACHE numAlts for exhaustiveness checking
     , _u_opts :: CtorOpts -- CACHE which optimizations are available
     }
+  deriving (Eq)
 
 
 data CtorOpts
@@ -231,21 +267,8 @@ data CtorOpts
   deriving (Eq, Ord)
 
 
-data Ctor =
-  Ctor N.Name Index.ZeroBased Int [Type] -- CACHE length args
-
-
-
--- DOCS
-
-
-data Docs
-  = NoDocs R.Region
-  | YesDocs
-      { _region :: R.Region
-      , _overview :: B.ByteString
-      , _comments :: Map.Map N.Name Text
-      }
+data Ctor = Ctor Name Index.ZeroBased Int [Type] -- CACHE length args
+  deriving (Eq)
 
 
 
@@ -253,8 +276,8 @@ data Docs
 
 
 data Exports
-  = ExportEverything R.Region
-  | Export (Map.Map N.Name (A.Located Export))
+  = ExportEverything A.Region
+  | Export (Map.Map Name (A.Located Export))
 
 
 data Export
@@ -272,8 +295,8 @@ data Export
 
 data Effects
   = NoEffects
-  | Ports (Map.Map N.Name Port)
-  | Manager R.Region R.Region R.Region Manager
+  | Ports (Map.Map Name Port)
+  | Manager A.Region A.Region A.Region Manager
 
 
 data Port
@@ -282,9 +305,9 @@ data Port
 
 
 data Manager
-  = Cmd N.Name
-  | Sub N.Name
-  | Fx N.Name N.Name
+  = Cmd Name
+  | Sub Name
+  | Fx Name Name
 
 
 
@@ -292,8 +315,8 @@ data Manager
 
 
 instance Binary Alias where
-  get = liftM3 Alias get get get
-  put (Alias a b c) = put a >> put b >> put c
+  get = liftM2 Alias get get
+  put (Alias a b) = put a >> put b
 
 
 instance Binary Union where
@@ -319,7 +342,7 @@ instance Binary CtorOpts where
           0 -> return Normal
           1 -> return Enum
           2 -> return Unbox
-          _ -> error "binary encoding of CtorOpts was corrupted"
+          _ -> fail "binary encoding of CtorOpts was corrupted"
 
 
 instance Binary Annotation where
@@ -370,4 +393,9 @@ instance Binary AliasType where
         case n of
           0 -> liftM Holey get
           1 -> liftM Filled get
-          _ -> error "binary encoding of AliasType was corrupted"
+          _ -> fail "binary encoding of AliasType was corrupted"
+
+
+instance Binary FieldType where
+  get = liftM2 FieldType get get
+  put (FieldType a b) = put a >> put b

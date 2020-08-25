@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Elm.Compiler.Type
   ( Type(..)
-  , Context(..)
+  , RT.Context(..)
   , toDoc
   , DebugMetadata(..)
   , Alias(..)
@@ -14,19 +14,19 @@ module Elm.Compiler.Type
   where
 
 
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as Text
-import qualified Text.PrettyPrint.ANSI.Leijen as P
-import Text.PrettyPrint.ANSI.Leijen ((<+>))
+import qualified Data.Name as Name
 
 import qualified AST.Source as Src
-import qualified Elm.Name as N
-import qualified Parse.Primitives as Parse
+import qualified Json.Decode as D
+import qualified Json.Encode as E
+import Json.Encode ((==>))
+import qualified Json.String as Json
+import qualified Parse.Primitives as P
 import qualified Parse.Type as Type
 import qualified Reporting.Annotation as A
-import qualified Json.Decode as Decode
-import qualified Json.Encode as Encode
-import Json.Encode ((==>))
+import qualified Reporting.Doc as D
+import qualified Reporting.Render.Type as RT
+import qualified Reporting.Render.Type.Localizer as L
 
 
 
@@ -34,12 +34,12 @@ import Json.Encode ((==>))
 
 
 data Type
-    = Lambda Type Type
-    | Var N.Name
-    | Type N.Name [Type]
-    | Record [(N.Name, Type)] (Maybe N.Name)
-    | Unit
-    | Tuple Type Type [Type]
+  = Lambda Type Type
+  | Var Name.Name
+  | Type Name.Name [Type]
+  | Record [(Name.Name, Type)] (Maybe Name.Name)
+  | Unit
+  | Tuple Type Type [Type]
 
 
 data DebugMetadata =
@@ -50,118 +50,79 @@ data DebugMetadata =
     }
 
 
-data Alias = Alias N.Name [N.Name] Type
-data Union = Union N.Name [N.Name] [(N.Name, [Type])]
+data Alias = Alias Name.Name [Name.Name] Type
+data Union = Union Name.Name [Name.Name] [(Name.Name, [Type])]
 
 
 
 -- TO DOC
 
 
-data Context = None | InType | InFunction
-
-
-toDoc :: Context -> Type -> P.Doc
-toDoc context tipe =
+toDoc :: L.Localizer -> RT.Context -> Type -> D.Doc
+toDoc localizer context tipe =
   case tipe of
     Lambda _ _ ->
-        let t:ts =
-              map (toDoc InFunction) (collectLambdas tipe)
-
-            lambda =
-              P.sep [ t, P.sep (map (P.text "->" <+>) ts) ]
-        in
-            case context of
-              None -> lambda
-              _ -> P.parens lambda
+      let
+        a:b:cs =
+          map (toDoc localizer RT.Func) (collectLambdas tipe)
+      in
+      RT.lambda context a b cs
 
     Var name ->
-        P.text (N.toString name)
+      D.fromName name
 
     Unit ->
-        "()"
+      "()"
 
     Tuple a b cs ->
-        P.sep
-          [ P.cat $
-              [ "(" <+> toDoc None a
-              , "," <+> toDoc None b
-              ]
-              ++ map ("," <+>) (map (toDoc None) cs)
-          , ")"
-          ]
+      RT.tuple
+        (toDoc localizer RT.None a)
+        (toDoc localizer RT.None b)
+        (map (toDoc localizer RT.None) cs)
 
     Type name args ->
-        case args of
-          [] ->
-            P.text (N.toString name)
-
-          _ ->
-            let
-              docName =
-                P.text (N.toString name)
-
-              application =
-                P.hang 2 $ P.sep (docName : map (toDoc InType) args)
-            in
-              case context of
-                InType ->
-                  P.parens application
-
-                _ ->
-                  application
-
-    Record [] Nothing ->
-      "{}"
+      RT.apply
+        context
+        (D.fromName name)
+        (map (toDoc localizer RT.App) args)
 
     Record fields ext ->
-      case ext of
-        Nothing ->
-          P.sep
-            [ P.cat (zipWith (<+>) ("{" : repeat ",") (map entryToDoc fields))
-            , "}"
-            ]
-
-        Just x ->
-          P.hang 4 $
-            P.sep
-              [ "{" <+> P.text (N.toString x) <+> "|"
-              , P.sep (P.punctuate "," (map entryToDoc fields))
-              , "}"
-              ]
+      RT.record
+        (map (entryToDoc localizer) fields)
+        (fmap D.fromName ext)
 
 
-entryToDoc :: (N.Name, Type) -> P.Doc
-entryToDoc (field, fieldType) =
-  P.text (N.toString field) <+> ":" <+> toDoc None fieldType
+entryToDoc :: L.Localizer -> (Name.Name, Type) -> (D.Doc, D.Doc)
+entryToDoc localizer (field, fieldType) =
+  ( D.fromName field, toDoc localizer RT.None fieldType )
 
 
 collectLambdas :: Type -> [Type]
 collectLambdas tipe =
   case tipe of
-    Lambda arg body -> arg : collectLambdas body
-    _ -> [tipe]
+    Lambda arg body ->
+      arg : collectLambdas body
+
+    _ ->
+      [tipe]
 
 
 
 -- JSON for TYPE
 
 
-encode :: Type -> Encode.Value
+encode :: Type -> E.Value
 encode tipe =
-  Encode.text $ Text.pack $
-    P.displayS (P.renderPretty 1.0 (maxBound `div` 2) (toDoc None tipe)) ""
+  E.chars $ D.toLine (toDoc L.empty RT.None tipe)
 
 
-decoder :: Decode.Decoder () Type
+decoder :: D.Decoder () Type
 decoder =
-  do  txt <- Decode.text
-      case Parse.run Type.expression (Text.encodeUtf8 (Text.replace "'" "_" txt)) of
-        Left _ ->
-          Decode.fail ()
-
-        Right (tipe, _, _) ->
-          Decode.succeed (fromRawType tipe)
+  let
+    parser =
+      P.specialize (\_ _ _ -> ()) (fromRawType . fst <$> Type.expression)
+  in
+  D.customString parser (\_ _ -> ())
 
 
 fromRawType :: Src.Type -> Type
@@ -199,33 +160,35 @@ fromRawType (A.At _ astType) =
 -- JSON for PROGRAM
 
 
-encodeMetadata :: DebugMetadata -> Encode.Value
+encodeMetadata :: DebugMetadata -> E.Value
 encodeMetadata (DebugMetadata msg aliases unions) =
-  Encode.object
+  E.object
     [ "message" ==> encode msg
-    , "aliases" ==> Encode.object (map toAliasField aliases)
-    , "unions" ==> Encode.object (map toUnionField unions)
+    , "aliases" ==> E.object (map toTypeAliasField aliases)
+    , "unions" ==> E.object (map toCustomTypeField unions)
     ]
 
 
-toAliasField :: Alias -> ( Text.Text, Encode.Value )
-toAliasField (Alias name args tipe) =
-  N.toText name ==>
-    Encode.object
-      [ "args" ==> Encode.list Encode.name args
+toTypeAliasField :: Alias -> ( Json.String, E.Value )
+toTypeAliasField (Alias name args tipe) =
+  ( Json.fromName name
+  , E.object
+      [ "args" ==> E.list E.name args
       , "type" ==> encode tipe
       ]
+  )
 
 
-toUnionField :: Union -> ( Text.Text, Encode.Value )
-toUnionField (Union name args constructors) =
-  N.toText name ==>
-    Encode.object
-      [ "args" ==> Encode.list Encode.name args
-      , "tags" ==> Encode.object (map toCtorObject constructors)
+toCustomTypeField :: Union -> ( Json.String, E.Value )
+toCustomTypeField (Union name args constructors) =
+  ( Json.fromName name
+  , E.object
+      [ "args" ==> E.list E.name args
+      , "tags" ==> E.object (map toVariantObject constructors)
       ]
+  )
 
 
-toCtorObject :: (N.Name, [Type]) -> ( Text.Text, Encode.Value )
-toCtorObject (name, args) =
-  N.toText name ==> Encode.list encode args
+toVariantObject :: (Name.Name, [Type]) -> ( Json.String, E.Value )
+toVariantObject (name, args) =
+  ( Json.fromName name, E.list encode args )

@@ -21,16 +21,17 @@ as SML/NJ to get nice trees.
 -}
 
 import Control.Arrow (second)
-import Control.Monad (liftM, liftM2, liftM4)
+import Control.Monad (liftM, liftM2, liftM5)
 import Data.Binary
 import qualified Data.List as List
 import qualified Data.Maybe as Maybe
+import qualified Data.Name as Name
 import qualified Data.Set as Set
-import Data.Text (Text)
 
 import qualified AST.Canonical as Can
 import qualified Data.Index as Index
-import qualified Elm.Name as N
+import qualified Elm.ModuleName as ModuleName
+import qualified Elm.String as ES
 import qualified Reporting.Annotation as A
 
 
@@ -71,13 +72,14 @@ data DecisionTree
 
 
 data Test
-  = IsCtor N.Name Index.ZeroBased Int Can.CtorOpts
+  = IsCtor ModuleName.Canonical Name.Name Index.ZeroBased Int Can.CtorOpts
   | IsCons
   | IsNil
   | IsTuple
   | IsInt Int
-  | IsChr Text
-  | IsStr Text
+  | IsChr ES.String
+  | IsStr ES.String
+  | IsBool Bool
   deriving (Eq, Ord)
 
 
@@ -137,7 +139,7 @@ toDecisionTree rawBranches =
 isComplete :: [Test] -> Bool
 isComplete tests =
   case head tests of
-    IsCtor _ _ numAlts _ ->
+    IsCtor _ _ _ numAlts _ ->
       numAlts == length tests
 
     IsCons ->
@@ -157,6 +159,9 @@ isComplete tests =
 
     IsInt _ ->
       False
+
+    IsBool _ ->
+      length tests == 2
 
 
 
@@ -224,6 +229,9 @@ flatten pathPattern@(path, A.At region pattern) otherPathPatterns =
       pathPattern : otherPathPatterns
 
     Can.PInt _ ->
+      pathPattern : otherPathPatterns
+
+    Can.PBool _ _ ->
       pathPattern : otherPathPatterns
 
 
@@ -307,8 +315,8 @@ testAtPath selectedPath (Branch _ pathPatterns) =
 
     Just (A.At _ pattern) ->
       case pattern of
-        Can.PCtor _ _ (Can.Union _ _ numAlts opts) name index _ ->
-            Just (IsCtor name index numAlts opts)
+        Can.PCtor home _ (Can.Union _ _ numAlts opts) name index _ ->
+            Just (IsCtor home name index numAlts opts)
 
         Can.PList ps ->
             Just (case ps of { [] -> IsNil ; _ -> IsCons })
@@ -337,6 +345,9 @@ testAtPath selectedPath (Branch _ pathPatterns) =
         Can.PChr chr ->
             Just (IsChr chr)
 
+        Can.PBool _ bool ->
+            Just (IsBool bool)
+
         Can.PRecord _ ->
             Nothing
 
@@ -362,7 +373,7 @@ toRelevantBranch test path branch@(Branch goal pathPatterns) =
         case pattern of
           Can.PCtor _ _ (Can.Union _ _ numAlts _) name _ ctorArgs ->
               case test of
-                IsCtor testName _ _ _ | name == testName ->
+                IsCtor _ testName _ _ _ | name == testName ->
                   Just $ Branch goal $
                     case map dearg ctorArgs of
                       [arg] | numAlts == 1 ->
@@ -417,6 +428,14 @@ toRelevantBranch test path branch@(Branch goal pathPatterns) =
           Can.PInt int ->
               case test of
                 IsInt testInt | int == testInt ->
+                  Just (Branch goal (start ++ end))
+
+                _ ->
+                  Nothing
+
+          Can.PBool _ bool ->
+              case test of
+                IsBool testBool | bool == testBool ->
                   Just (Branch goal (start ++ end))
 
                 _ ->
@@ -496,6 +515,7 @@ needsTests (A.At _ pattern) =
     Can.PChr _            -> True
     Can.PStr _            -> True
     Can.PInt _            -> True
+    Can.PBool _ _         -> True
     Can.PAlias _ _ ->
         error "aliases should never reach 'isIrrelevantTo' function"
 
@@ -578,25 +598,27 @@ smallBranchingFactor branches path =
 instance Binary Test where
   put test =
     case test of
-      IsCtor a b c d -> putWord8 0 >> put a >> put b >> put c >> put d
-      IsCons         -> putWord8 1
-      IsNil          -> putWord8 2
-      IsTuple        -> putWord8 3
-      IsChr a        -> putWord8 4 >> put a
-      IsStr a        -> putWord8 5 >> put a
-      IsInt a        -> putWord8 6 >> put a
+      IsCtor a b c d e -> putWord8 0 >> put a >> put b >> put c >> put d >> put e
+      IsCons           -> putWord8 1
+      IsNil            -> putWord8 2
+      IsTuple          -> putWord8 3
+      IsChr a          -> putWord8 4 >> put a
+      IsStr a          -> putWord8 5 >> put a
+      IsInt a          -> putWord8 6 >> put a
+      IsBool a         -> putWord8 7 >> put a
 
   get =
     do  word <- getWord8
         case word of
-          0 -> liftM4 IsCtor get get get get
+          0 -> liftM5 IsCtor get get get get get
           1 -> pure   IsCons
           2 -> pure   IsNil
           3 -> pure   IsTuple
           4 -> liftM  IsChr get
           5 -> liftM  IsStr get
           6 -> liftM  IsInt get
-          _ -> error "problem getting DecisionTree.Test binary"
+          7 -> liftM  IsBool get
+          _ -> fail "problem getting DecisionTree.Test binary"
 
 
 instance Binary Path where
@@ -612,4 +634,4 @@ instance Binary Path where
           0 -> liftM2 Index get get
           1 -> liftM Unbox get
           2 -> pure Empty
-          _ -> error "problem getting DecisionTree.Path binary"
+          _ -> fail "problem getting DecisionTree.Path binary"

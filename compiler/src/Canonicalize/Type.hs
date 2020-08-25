@@ -9,15 +9,14 @@ module Canonicalize.Type
 
 import qualified Data.List as List
 import qualified Data.Map as Map
+import qualified Data.Name as Name
 
 import qualified AST.Canonical as Can
 import qualified AST.Source as Src
 import qualified Canonicalize.Environment as Env
 import qualified Canonicalize.Environment.Dups as Dups
-import qualified Elm.Name as N
 import qualified Reporting.Annotation as A
 import qualified Reporting.Error.Canonicalize as Error
-import qualified Reporting.Region as R
 import qualified Reporting.Result as Result
 
 
@@ -63,8 +62,7 @@ canonicalize env (A.At typeRegion tipe) =
           <*> canonicalize env b
 
     Src.TRecord fields ext ->
-        do  fieldDict <- Dups.checkFields fields
-            cfields <- traverse (canonicalize env) fieldDict
+        do  cfields <- sequenceA =<< Dups.checkFields (canonicalizeFields env fields)
             return $ Can.TRecord cfields (fmap A.toValue ext)
 
     Src.TUnit ->
@@ -86,11 +84,21 @@ canonicalize env (A.At typeRegion tipe) =
                 Result.throw $ Error.TupleLargerThanThree typeRegion
 
 
+canonicalizeFields :: Env.Env -> [(A.Located Name.Name, Src.Type)] -> [(A.Located Name.Name, Result i w Can.FieldType)]
+canonicalizeFields env fields =
+  let
+    len = fromIntegral (length fields)
+    canonicalizeField index (name, srcType) =
+      (name, Can.FieldType index <$> canonicalize env srcType)
+  in
+  zipWith canonicalizeField [0..len] fields
+
+
 
 -- CANONICALIZE TYPE
 
 
-canonicalizeType :: Env.Env -> R.Region -> N.Name -> [Src.Type] -> Env.Type -> Result i w Can.Type
+canonicalizeType :: Env.Env -> A.Region -> Name.Name -> [Src.Type] -> Env.Type -> Result i w Can.Type
 canonicalizeType env region name args info =
   do  cargs <- traverse (canonicalize env) args
       case info of
@@ -103,7 +111,7 @@ canonicalizeType env region name args info =
             Can.TType home name cargs
 
 
-checkArity :: Int -> R.Region -> N.Name -> [A.Located arg] -> answer -> Result i w answer
+checkArity :: Int -> A.Region -> Name.Name -> [A.Located arg] -> answer -> Result i w answer
 checkArity expected region name args answer =
   let actual = length args in
   if expected == actual then
@@ -116,7 +124,7 @@ checkArity expected region name args answer =
 -- ADD FREE VARS
 
 
-addFreeVars :: Map.Map N.Name () -> Can.Type -> Map.Map N.Name ()
+addFreeVars :: Map.Map Name.Name () -> Can.Type -> Map.Map Name.Name ()
 addFreeVars freeVars tipe =
   case tipe of
     Can.TLambda arg result ->
@@ -129,10 +137,10 @@ addFreeVars freeVars tipe =
       List.foldl' addFreeVars freeVars args
 
     Can.TRecord fields Nothing ->
-      Map.foldl addFreeVars freeVars fields
+      Map.foldl addFieldFreeVars freeVars fields
 
     Can.TRecord fields (Just ext) ->
-      Map.foldl addFreeVars (Map.insert ext () freeVars) fields
+      Map.foldl addFieldFreeVars (Map.insert ext () freeVars) fields
 
     Can.TUnit ->
       freeVars
@@ -147,3 +155,8 @@ addFreeVars freeVars tipe =
 
     Can.TAlias _ _ args _ ->
       List.foldl' (\fvs (_,arg) -> addFreeVars fvs arg) freeVars args
+
+
+addFieldFreeVars :: Map.Map Name.Name () -> Can.FieldType -> Map.Map Name.Name ()
+addFieldFreeVars freeVars (Can.FieldType _ tipe) =
+  addFreeVars freeVars tipe

@@ -10,9 +10,9 @@ module AST.Utils.Type
 
 
 import qualified Data.Map as Map
+import qualified Data.Name as Name
 
-import AST.Canonical (Type(..), AliasType(..))
-import qualified Elm.Name as N
+import AST.Canonical (Type(..), AliasType(..), FieldType(..))
 
 
 
@@ -33,7 +33,7 @@ delambda tipe =
 -- DEALIAS
 
 
-dealias :: [(N.Name, Type)] -> AliasType -> Type
+dealias :: [(Name.Name, Type)] -> AliasType -> Type
 dealias args aliasType =
   case aliasType of
     Holey tipe ->
@@ -43,7 +43,7 @@ dealias args aliasType =
       tipe
 
 
-dealiasHelp :: Map.Map N.Name Type -> Type -> Type
+dealiasHelp :: Map.Map Name.Name Type -> Type -> Type
 dealiasHelp typeTable tipe =
   case tipe of
     TLambda a b ->
@@ -55,7 +55,7 @@ dealiasHelp typeTable tipe =
       Map.findWithDefault tipe x typeTable
 
     TRecord fields ext ->
-      TRecord (Map.map (dealiasHelp typeTable) fields) ext
+      TRecord (Map.map (dealiasField typeTable) fields) ext
 
     TAlias home name args t' ->
       TAlias home name (map (fmap (dealiasHelp typeTable)) args) t'
@@ -73,6 +73,11 @@ dealiasHelp typeTable tipe =
         (fmap (dealiasHelp typeTable) maybeC)
 
 
+dealiasField :: Map.Map Name.Name Type -> FieldType -> FieldType
+dealiasField typeTable (FieldType index tipe) =
+  FieldType index (dealiasHelp typeTable tipe)
+
+
 
 -- DEEP DEALIAS
 
@@ -87,7 +92,7 @@ deepDealias tipe =
       tipe
 
     TRecord fields ext ->
-      TRecord (Map.map deepDealias fields) ext
+      TRecord (Map.map deepDealiasField fields) ext
 
     TAlias _ _ args tipe' ->
       deepDealias (dealias args tipe')
@@ -100,6 +105,11 @@ deepDealias tipe =
 
     TTuple a b c ->
       TTuple (deepDealias a) (deepDealias b) (fmap deepDealias c)
+
+
+deepDealiasField :: FieldType -> FieldType
+deepDealiasField (FieldType index tipe) =
+  FieldType index (deepDealias tipe)
 
 
 

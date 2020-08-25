@@ -6,23 +6,23 @@ module Reporting.Render.Type
   , apply
   , tuple
   , record
-  , recordSnippet
+  , vrecordSnippet
+  , vrecord
   , srcToDoc
   , canToDoc
   )
   where
 
 
-import qualified Data.Map as Map
 import qualified Data.Maybe as Maybe
+import qualified Data.Name as Name
 
 import qualified AST.Source as Src
 import qualified AST.Canonical as Can
-import qualified AST.Module.Name as ModuleName
-import qualified Elm.Name as N
 import qualified Reporting.Annotation as A
-import qualified Reporting.Helpers as H
-import Reporting.Helpers ( Doc, (<+>), (<>) )
+import qualified Reporting.Doc as D
+import Reporting.Doc ( Doc, (<+>), (<>) )
+import qualified Reporting.Render.Type.Localizer as L
 
 
 
@@ -39,12 +39,12 @@ lambda :: Context -> Doc -> Doc -> [Doc] -> Doc
 lambda context arg1 arg2 args =
   let
     lambdaDoc =
-      H.sep (arg1 : map ("->" <+>) (arg2:args))
+      D.align $ D.sep (arg1 : map ("->" <+>) (arg2:args))
   in
   case context of
     None -> lambdaDoc
-    Func -> H.cat [ "(", lambdaDoc, ")" ]
-    App  -> H.cat [ "(", lambdaDoc, ")" ]
+    Func -> D.cat [ "(", lambdaDoc, ")" ]
+    App  -> D.cat [ "(", lambdaDoc, ")" ]
 
 
 apply :: Context -> Doc -> [Doc] -> Doc
@@ -56,10 +56,10 @@ apply context name args =
     _:_ ->
       let
         applyDoc =
-          H.hang 4 (H.sep (name : args))
+          D.hang 4 (D.sep (name : args))
       in
       case context of
-        App  -> H.cat [ "(", applyDoc, ")" ]
+        App  -> D.cat [ "(", applyDoc, ")" ]
         Func -> applyDoc
         None -> applyDoc
 
@@ -70,7 +70,7 @@ tuple a b cs =
     entries =
       zipWith (<+>) ("(" : repeat ",") (a:b:cs)
   in
-  H.sep [ H.cat entries, ")" ]
+  D.align $ D.sep [ D.cat entries, ")" ]
 
 
 record :: [(Doc, Doc)] -> Maybe Doc -> Doc
@@ -80,16 +80,16 @@ record entries maybeExt =
         "{}"
 
     (fields, Nothing) ->
-        H.sep
-          [ H.cat (zipWith (<+>) ("{" : repeat ",") fields)
+        D.align $ D.sep $
+          [ D.cat (zipWith (<+>) ("{" : repeat ",") fields)
           , "}"
           ]
 
     (fields, Just ext) ->
-        H.sep
-          [ H.hang 4 $ H.sep $
+        D.align $ D.sep $
+          [ D.hang 4 $ D.sep $
               [ "{" <+> ext
-              , H.cat (zipWith (<+>) ("|" : repeat ",") fields)
+              , D.cat (zipWith (<+>) ("|" : repeat ",") fields)
               ]
           , "}"
           ]
@@ -97,16 +97,36 @@ record entries maybeExt =
 
 entryToDoc :: (Doc, Doc) -> Doc
 entryToDoc (fieldName, fieldType) =
-  H.hang 4 (H.sep [ fieldName <+> ":", fieldType ])
+  D.hang 4 (D.sep [ fieldName <+> ":", fieldType ])
 
 
-recordSnippet :: (Doc, Doc) -> [(Doc, Doc)] -> Doc
-recordSnippet entry entries =
+vrecordSnippet :: (Doc, Doc) -> [(Doc, Doc)] -> Doc
+vrecordSnippet entry entries =
   let
     field  = "{" <+> entryToDoc entry
     fields = zipWith (<+>) (repeat ",") (map entryToDoc entries ++ ["..."])
   in
-  H.sep [ H.cat (field:fields), "}" ]
+  D.vcat (field : fields ++ ["}"])
+
+
+vrecord :: [(Doc, Doc)] -> Maybe Doc -> Doc
+vrecord entries maybeExt =
+  case (map entryToDoc entries, maybeExt) of
+    ([], Nothing) ->
+      "{}"
+
+    (fields, Nothing) ->
+      D.vcat $
+        zipWith (<+>) ("{" : repeat ",") fields ++ ["}"]
+
+    (fields, Just ext) ->
+      D.vcat
+        [ D.hang 4 $ D.vcat $
+            [ "{" <+> ext
+            , D.cat (zipWith (<+>) ("|" : repeat ",") fields)
+            ]
+        , "}"
+        ]
 
 
 
@@ -126,22 +146,22 @@ srcToDoc context (A.At _ tipe) =
         (map (srcToDoc Func) rest)
 
     Src.TVar name ->
-      H.nameToDoc name
+      D.fromName name
 
     Src.TType _ name args ->
       apply context
-        (H.nameToDoc name)
+        (D.fromName name)
         (map (srcToDoc App) args)
 
     Src.TTypeQual _ home name args ->
       apply context
-        (H.nameToDoc home <> "." <> H.nameToDoc name)
+        (D.fromName home <> "." <> D.fromName name)
         (map (srcToDoc App) args)
 
     Src.TRecord fields ext ->
       record
-        (map fieldToDocs fields)
-        (fmap (H.nameToDoc . A.toValue) ext)
+        (map srcFieldToDocs fields)
+        (fmap (D.fromName . A.toValue) ext)
 
     Src.TUnit ->
       "()"
@@ -153,9 +173,9 @@ srcToDoc context (A.At _ tipe) =
         (map (srcToDoc None) cs)
 
 
-fieldToDocs :: (A.Located N.Name, Src.Type) -> (Doc, Doc)
-fieldToDocs (A.At _ fieldName, fieldType) =
-  ( H.nameToDoc fieldName
+srcFieldToDocs :: (A.Located Name.Name, Src.Type) -> (Doc, Doc)
+srcFieldToDocs (A.At _ fieldName, fieldType) =
+  ( D.fromName fieldName
   , srcToDoc None fieldType
   )
 
@@ -177,49 +197,51 @@ collectSrcArgs tipe =
 -- CANONICAL TYPE TO DOC
 
 
-canToDoc :: Context -> Can.Type -> Doc
-canToDoc context tipe =
+canToDoc :: L.Localizer -> Context -> Can.Type -> Doc
+canToDoc localizer context tipe =
   case tipe of
     Can.TLambda arg1 result ->
       let
         (arg2, rest) = collectArgs result
       in
       lambda context
-        (canToDoc Func arg1)
-        (canToDoc Func arg2)
-        (map (canToDoc Func) rest)
+        (canToDoc localizer Func arg1)
+        (canToDoc localizer Func arg2)
+        (map (canToDoc localizer Func) rest)
 
     Can.TVar name ->
-      H.nameToDoc name
+      D.fromName name
 
-    Can.TType (ModuleName.Canonical _ home) name args ->
+    Can.TType home name args ->
       apply context
-        (H.nameToDoc home <> "." <> H.nameToDoc name)
-        (map (canToDoc App) args)
+        (L.toDoc localizer home name)
+        (map (canToDoc localizer App) args)
 
     Can.TRecord fields ext ->
       record
-        (map entryToDocs (Map.toList fields))
-        (fmap H.nameToDoc ext)
+        (map (canFieldToDoc localizer) (Can.fieldsToList fields))
+        (fmap D.fromName ext)
 
     Can.TUnit ->
       "()"
 
     Can.TTuple a b maybeC ->
       tuple
-        (canToDoc None a)
-        (canToDoc None b)
-        (map (canToDoc None) (Maybe.maybeToList maybeC))
+        (canToDoc localizer None a)
+        (canToDoc localizer None b)
+        (map (canToDoc localizer None) (Maybe.maybeToList maybeC))
 
-    Can.TAlias (ModuleName.Canonical _ home) name args _ ->
+    Can.TAlias home name args _ ->
       apply context
-        (H.nameToDoc home <> "." <> H.nameToDoc name)
-        (map (canToDoc App . snd) args)
+        (L.toDoc localizer home name)
+        (map (canToDoc localizer App . snd) args)
 
 
-entryToDocs :: (N.Name, Can.Type) -> (Doc, Doc)
-entryToDocs (name, tipe) =
-  (H.nameToDoc name, canToDoc None tipe)
+canFieldToDoc :: L.Localizer -> (Name.Name, Can.Type) -> (Doc, Doc)
+canFieldToDoc localizer (name, tipe) =
+  ( D.fromName name
+  , canToDoc localizer None tipe
+  )
 
 
 collectArgs :: Can.Type -> (Can.Type, [Can.Type])

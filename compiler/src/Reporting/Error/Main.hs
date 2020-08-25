@@ -7,13 +7,15 @@ module Reporting.Error.Main
   where
 
 
+import qualified Data.Name as Name
+
 import qualified AST.Canonical as Can
-import qualified Elm.Name as N
+import qualified Reporting.Annotation as A
+import qualified Reporting.Doc as D
 import qualified Reporting.Error.Canonicalize as E
-import qualified Reporting.Helpers as H
-import qualified Reporting.Region as R
 import qualified Reporting.Render.Code as Code
 import qualified Reporting.Render.Type as RT
+import qualified Reporting.Render.Type.Localizer as L
 import qualified Reporting.Report as Report
 
 
@@ -22,44 +24,44 @@ import qualified Reporting.Report as Report
 
 
 data Error
-  = BadType R.Region Can.Type
-  | BadCycle R.Region [N.Name]
-  | BadFlags R.Region Can.Type E.InvalidPayload
+  = BadType A.Region Can.Type
+  | BadCycle A.Region Name.Name [Name.Name]
+  | BadFlags A.Region Can.Type E.InvalidPayload
 
 
 
 -- TO REPORT
 
 
-toReport :: Code.Source -> Error -> Report.Report
-toReport source err =
+toReport :: L.Localizer -> Code.Source -> Error -> Report.Report
+toReport localizer source err =
   case err of
     BadType region tipe ->
       Report.Report "BAD MAIN TYPE" region [] $
-        Report.toCodeSnippet source region Nothing
+        Code.toSnippet source region Nothing
           (
             "I cannot handle this type of `main` value:"
           ,
-            H.stack
+            D.stack
               [ "The type of `main` value I am seeing is:"
-              , H.indent 4 $ H.dullyellow $ RT.canToDoc RT.None tipe
-              , H.reflow $
+              , D.indent 4 $ D.dullyellow $ RT.canToDoc localizer RT.None tipe
+              , D.reflow $
                   "I only know how to handle Html, Svg, and Programs\
                   \ though. Modify `main` to be one of those types of values!"
               ]
           )
 
-    BadCycle region cycleNames ->
+    BadCycle region name names ->
       Report.Report "BAD MAIN" region [] $
-        Report.toCodeSnippet source region Nothing
+        Code.toSnippet source region Nothing
           (
             "A `main` definition cannot be defined in terms of itself."
           ,
-            H.stack
-              [ H.reflow $
+            D.stack
+              [ D.reflow $
                   "It should be a boring value with no recursion. But\
                   \ instead it is involved in this cycle of definitions:"
-              , H.indent 4 (H.drawCycle cycleNames)
+              , D.cycle 4 name names
               ]
           )
 
@@ -67,9 +69,9 @@ toReport source err =
       let
         formatDetails (aBadKindOfThing, butThatIsNoGood) =
           Report.Report "BAD FLAGS" region [] $
-            Report.toCodeSnippet source region Nothing
+            Code.toSnippet source region Nothing
               (
-                H.reflow $
+                D.reflow $
                   "Your `main` program wants " ++ aBadKindOfThing ++ " from JavaScript."
               ,
                 butThatIsNoGood
@@ -81,7 +83,7 @@ toReport source err =
             (
               "an extended record"
             ,
-              H.reflow $
+              D.reflow $
                 "But the exact shape of the record must be known at compile time. No type variables!"
             )
 
@@ -89,7 +91,7 @@ toReport source err =
             (
               "a function"
             ,
-              H.reflow $
+              D.reflow $
                 "But if I allowed functions from JS, it would be possible to sneak\
                 \ side-effects and runtime exceptions into Elm!"
             )
@@ -98,23 +100,23 @@ toReport source err =
             (
               "an unspecified type"
             ,
-              H.reflow $
-                "But type variables like `" ++ N.toString name ++ "` cannot be given as flags.\
+              D.reflow $
+                "But type variables like `" ++ Name.toChars name ++ "` cannot be given as flags.\
                 \ I need to know exactly what type of data I am getting, so I can guarantee that\
                 \ unexpected data cannot sneak in and crash the Elm program."
             )
 
           E.UnsupportedType name ->
             (
-              "a `" ++ N.toString name ++ "` value"
+              "a `" ++ Name.toChars name ++ "` value"
             ,
-              H.stack
-                [ H.reflow $ "I cannot handle that. The types that CAN be in flags include:"
-                , H.indent 4 $
-                    H.reflow $
+              D.stack
+                [ D.reflow $ "I cannot handle that. The types that CAN be in flags include:"
+                , D.indent 4 $
+                    D.reflow $
                       "Ints, Floats, Bools, Strings, Maybes, Lists, Arrays,\
                       \ tuples, records, and JSON values."
-                , H.reflow $
+                , D.reflow $
                     "Since JSON values can flow through, you can use JSON encoders and decoders\
                     \ to allow other types through as well. More advanced users often just do\
                     \ everything with encoders and decoders for more control and better errors."

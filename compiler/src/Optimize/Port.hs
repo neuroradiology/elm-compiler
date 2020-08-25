@@ -11,13 +11,13 @@ module Optimize.Port
 import Prelude hiding (maybe, null)
 import Control.Monad (foldM)
 import qualified Data.Map as Map
+import qualified Data.Name as Name
 
 import qualified AST.Canonical as Can
 import qualified AST.Optimized as Opt
-import qualified AST.Module.Name as ModuleName
 import qualified AST.Utils.Type as Type
 import qualified Data.Index as Index
-import qualified Elm.Name as N
+import qualified Elm.ModuleName as ModuleName
 import qualified Optimize.Names as Names
 
 
@@ -38,7 +38,7 @@ toEncoder tipe =
       error "toEncoder: type variable"
 
     Can.TUnit ->
-      encode "null"
+      Opt.Function [Name.dollar] <$> encode "null"
 
     Can.TTuple a b c ->
       encodeTuple a b c
@@ -46,34 +46,34 @@ toEncoder tipe =
     Can.TType _ name args ->
       case args of
         []
-          | name == N.float  -> encode "float"
-          | name == N.int    -> encode "int"
-          | name == N.bool   -> encode "bool"
-          | name == N.string -> encode "string"
-          | name == N.value  -> encode "value"
+          | name == Name.float  -> encode "float"
+          | name == Name.int    -> encode "int"
+          | name == Name.bool   -> encode "bool"
+          | name == Name.string -> encode "string"
+          | name == Name.value  -> Names.registerGlobal ModuleName.basics Name.identity
 
         [arg]
-          | name == N.maybe -> encodeMaybe arg
-          | name == N.list  -> encodeList arg
-          | name == N.array -> encodeArray arg
+          | name == Name.maybe -> encodeMaybe arg
+          | name == Name.list  -> encodeList arg
+          | name == Name.array -> encodeArray arg
 
         _ ->
-          error "toEncoder: bad union type"
+          error "toEncoder: bad custom type"
 
     Can.TRecord _ (Just _) ->
       error "toEncoder: bad record"
 
     Can.TRecord fields Nothing ->
       let
-        encodeField (name, fieldType) =
+        encodeField (name, Can.FieldType _ fieldType) =
           do  encoder <- toEncoder fieldType
-              let value = Opt.Call encoder [Opt.Access (Opt.VarLocal N.dollar) name]
-              return $ Opt.Tuple (Opt.Str (N.toText name)) value Nothing
+              let value = Opt.Call encoder [Opt.Access (Opt.VarLocal Name.dollar) name]
+              return $ Opt.Tuple (Opt.Str (Name.toElmString name)) value Nothing
       in
       do  object <- encode "object"
           keyValuePairs <- traverse encodeField (Map.toList fields)
           Names.registerFieldDict fields $
-            Opt.Function [N.dollar] (Opt.Call object [Opt.List keyValuePairs])
+            Opt.Function [Name.dollar] (Opt.Call object [Opt.List keyValuePairs])
 
 
 
@@ -85,8 +85,8 @@ encodeMaybe tipe =
   do  null <- encode "null"
       encoder <- toEncoder tipe
       destruct <- Names.registerGlobal ModuleName.maybe "destruct"
-      return $ Opt.Function [N.dollar] $
-        Opt.Call destruct [ null, encoder, Opt.VarLocal N.dollar ]
+      return $ Opt.Function [Name.dollar] $
+        Opt.Call destruct [ null, encoder, Opt.VarLocal Name.dollar ]
 
 
 encodeList :: Can.Type -> Names.Tracker Opt.Expr
@@ -107,27 +107,31 @@ encodeTuple :: Can.Type -> Can.Type -> Maybe Can.Type -> Names.Tracker Opt.Expr
 encodeTuple a b maybeC =
   let
     let_ arg index body =
-      Opt.Destruct (Opt.Destructor arg (Opt.Index index (Opt.Root N.dollar))) body
+      Opt.Destruct (Opt.Destructor arg (Opt.Index index (Opt.Root Name.dollar))) body
 
     encodeArg arg tipe =
       do  encoder <- toEncoder tipe
           return $ Opt.Call encoder [ Opt.VarLocal arg ]
   in
   do  list <- encode "list"
+      identity <- Names.registerGlobal ModuleName.basics Name.identity
       arg1 <- encodeArg "a" a
       arg2 <- encodeArg "b" b
 
-      Opt.Function [N.dollar] <$>
-        let_ "a" Index.first <$>
-        let_ "b" Index.second <$>
-          case maybeC of
-            Nothing ->
-              return $ Opt.Call list [ arg1, arg2 ]
+      case maybeC of
+        Nothing ->
+          return $ Opt.Function [Name.dollar] $
+            let_ "a" Index.first $
+            let_ "b" Index.second $
+              Opt.Call list [ identity, Opt.List [ arg1, arg2 ] ]
 
-            Just c ->
-              do  arg3 <- encodeArg "c" c
-                  return $ let_ "c" Index.third $
-                    Opt.Call list [ arg1, arg2, arg3 ]
+        Just c ->
+          do  arg3 <- encodeArg "c" c
+              return $ Opt.Function [Name.dollar] $
+                let_ "a" Index.first $
+                let_ "b" Index.second $
+                let_ "c" Index.third $
+                  Opt.Call list [ identity, Opt.List [ arg1, arg2, arg3 ] ]
 
 
 
@@ -170,16 +174,16 @@ toDecoder tipe =
     Can.TType _ name args ->
       case args of
         []
-          | name == N.float  -> decode "float"
-          | name == N.int    -> decode "int"
-          | name == N.bool   -> decode "bool"
-          | name == N.string -> decode "string"
-          | name == N.value  -> decode "value"
+          | name == Name.float  -> decode "float"
+          | name == Name.int    -> decode "int"
+          | name == Name.bool   -> decode "bool"
+          | name == Name.string -> decode "string"
+          | name == Name.value  -> decode "value"
 
         [arg]
-          | name == N.maybe -> decodeMaybe arg
-          | name == N.list  -> decodeList arg
-          | name == N.array -> decodeArray arg
+          | name == Name.maybe -> decodeMaybe arg
+          | name == Name.list  -> decodeList arg
+          | name == Name.array -> decodeArray arg
 
         _ ->
           error "toDecoder: bad type"
@@ -264,7 +268,7 @@ decodeTuple a b maybeC =
 
 toLocal :: Int -> Opt.Expr
 toLocal index =
-  Opt.VarLocal (N.addIndex "x" index)
+  Opt.VarLocal (Name.fromVarIndex index)
 
 
 indexAndThen :: Int -> Can.Type -> Opt.Expr -> Names.Tracker Opt.Expr
@@ -274,7 +278,7 @@ indexAndThen i tipe decoder =
       typeDecoder <- toDecoder tipe
       return $
         Opt.Call andThen
-          [ Opt.Function [N.addIndex "x" i] decoder
+          [ Opt.Function [Name.fromVarIndex i] decoder
           , Opt.Call index [ Opt.Int i, typeDecoder ]
           ]
 
@@ -283,7 +287,7 @@ indexAndThen i tipe decoder =
 -- DECODE RECORDS
 
 
-decodeRecord :: Map.Map N.Name Can.Type -> Names.Tracker Opt.Expr
+decodeRecord :: Map.Map Name.Name Can.FieldType -> Names.Tracker Opt.Expr
 decodeRecord fields =
   let
     toFieldExpr name _ =
@@ -297,15 +301,15 @@ decodeRecord fields =
           Names.registerFieldDict fields (Map.toList fields)
 
 
-fieldAndThen :: Opt.Expr -> (N.Name, Can.Type) -> Names.Tracker Opt.Expr
-fieldAndThen decoder (key, tipe) =
+fieldAndThen :: Opt.Expr -> (Name.Name, Can.FieldType) -> Names.Tracker Opt.Expr
+fieldAndThen decoder (key, Can.FieldType _ tipe) =
   do  andThen <- decode "andThen"
       field <- decode "field"
       typeDecoder <- toDecoder tipe
       return $
         Opt.Call andThen
           [ Opt.Function [key] decoder
-          , Opt.Call field [ Opt.Str (N.toText key), typeDecoder ]
+          , Opt.Call field [ Opt.Str (Name.toElmString key), typeDecoder ]
           ]
 
 
@@ -313,11 +317,11 @@ fieldAndThen decoder (key, tipe) =
 -- GLOBALS HELPERS
 
 
-encode :: N.Name -> Names.Tracker Opt.Expr
+encode :: Name.Name -> Names.Tracker Opt.Expr
 encode name =
   Names.registerGlobal ModuleName.jsonEncode name
 
 
-decode :: N.Name -> Names.Tracker Opt.Expr
+decode :: Name.Name -> Names.Tracker Opt.Expr
 decode name =
   Names.registerGlobal ModuleName.jsonDecode name

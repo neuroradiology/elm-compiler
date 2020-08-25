@@ -14,21 +14,23 @@ module Reporting.Error.Canonicalize
 
 
 import qualified Data.Char as Char
+import qualified Data.List as List
 import qualified Data.Map as Map
+import qualified Data.Name as Name
+import qualified Data.OneOrMore as OneOrMore
 import qualified Data.Set as Set
 
 import qualified AST.Canonical as Can
 import qualified AST.Source as Src
-import qualified AST.Module.Name as ModuleName
 import qualified Data.Index as Index
-import qualified Elm.Name as N
+import qualified Elm.ModuleName as ModuleName
 import qualified Reporting.Annotation as A
-import qualified Reporting.Region as R
+import qualified Reporting.Doc as D
+import Reporting.Doc (Doc, (<+>), (<>))
 import qualified Reporting.Render.Code as Code
 import qualified Reporting.Render.Type as RT
 import qualified Reporting.Report as Report
-import qualified Reporting.Helpers as H
-import Reporting.Helpers ( Doc, (<+>), (<>) )
+import qualified Reporting.Suggest as Suggest
 
 
 
@@ -36,44 +38,44 @@ import Reporting.Helpers ( Doc, (<+>), (<>) )
 
 
 data Error
-  = AnnotationTooShort R.Region N.Name Index.ZeroBased Int
-  | AmbiguousVar R.Region (Maybe N.Name) N.Name [ModuleName.Canonical]
-  | AmbiguousType R.Region (Maybe N.Name) N.Name [ModuleName.Canonical]
-  | AmbiguousCtor R.Region (Maybe N.Name) N.Name [ModuleName.Canonical]
-  | AmbiguousBinop R.Region N.Name [ModuleName.Canonical]
-  | BadArity R.Region BadArityContext N.Name Int Int
-  | Binop R.Region N.Name N.Name
-  | DuplicateDecl N.Name R.Region R.Region
-  | DuplicateType N.Name R.Region R.Region
-  | DuplicateCtor N.Name R.Region R.Region
-  | DuplicateBinop N.Name R.Region R.Region
-  | DuplicateField N.Name R.Region R.Region
-  | DuplicateAliasArg N.Name N.Name R.Region R.Region
-  | DuplicateUnionArg N.Name N.Name R.Region R.Region
-  | DuplicatePattern DuplicatePatternContext N.Name R.Region R.Region
-  | EffectNotFound R.Region N.Name
-  | EffectFunctionNotFound R.Region N.Name
-  | ExportDuplicate N.Name R.Region R.Region
-  | ExportNotFound R.Region VarKind N.Name [N.Name]
-  | ExportOpenAlias R.Region N.Name
-  | ImportCtorByName R.Region N.Name N.Name
-  | ImportNotFound R.Region N.Name [ModuleName.Canonical]
-  | ImportOpenAlias R.Region N.Name
-  | ImportExposingNotFound R.Region ModuleName.Canonical N.Name [N.Name]
-  | NotFoundVar R.Region (Maybe N.Name) N.Name PossibleNames
-  | NotFoundType R.Region (Maybe N.Name) N.Name PossibleNames
-  | NotFoundCtor R.Region (Maybe N.Name) N.Name PossibleNames
-  | NotFoundBinop R.Region N.Name (Set.Set N.Name)
-  | PatternHasRecordCtor R.Region N.Name
-  | PortPayloadInvalid R.Region N.Name Can.Type InvalidPayload
-  | PortTypeInvalid R.Region N.Name PortProblem
-  | RecursiveAlias R.Region N.Name [N.Name] Src.Type [N.Name]
-  | RecursiveDecl [Can.Def]
-  | RecursiveLet (A.Located N.Name) [N.Name]
-  | Shadowing N.Name R.Region R.Region
-  | TupleLargerThanThree R.Region
-  | TypeVarsUnboundInUnion R.Region N.Name [N.Name] (N.Name, R.Region) [(N.Name, R.Region)]
-  | TypeVarsMessedUpInAlias R.Region N.Name [N.Name] [(N.Name, R.Region)] [(N.Name, R.Region)]
+  = AnnotationTooShort A.Region Name.Name Index.ZeroBased Int
+  | AmbiguousVar A.Region (Maybe Name.Name) Name.Name ModuleName.Canonical (OneOrMore.OneOrMore ModuleName.Canonical)
+  | AmbiguousType A.Region (Maybe Name.Name) Name.Name ModuleName.Canonical (OneOrMore.OneOrMore ModuleName.Canonical)
+  | AmbiguousVariant A.Region (Maybe Name.Name) Name.Name ModuleName.Canonical (OneOrMore.OneOrMore ModuleName.Canonical)
+  | AmbiguousBinop A.Region Name.Name ModuleName.Canonical (OneOrMore.OneOrMore ModuleName.Canonical)
+  | BadArity A.Region BadArityContext Name.Name Int Int
+  | Binop A.Region Name.Name Name.Name
+  | DuplicateDecl Name.Name A.Region A.Region
+  | DuplicateType Name.Name A.Region A.Region
+  | DuplicateCtor Name.Name A.Region A.Region
+  | DuplicateBinop Name.Name A.Region A.Region
+  | DuplicateField Name.Name A.Region A.Region
+  | DuplicateAliasArg Name.Name Name.Name A.Region A.Region
+  | DuplicateUnionArg Name.Name Name.Name A.Region A.Region
+  | DuplicatePattern DuplicatePatternContext Name.Name A.Region A.Region
+  | EffectNotFound A.Region Name.Name
+  | EffectFunctionNotFound A.Region Name.Name
+  | ExportDuplicate Name.Name A.Region A.Region
+  | ExportNotFound A.Region VarKind Name.Name [Name.Name]
+  | ExportOpenAlias A.Region Name.Name
+  | ImportCtorByName A.Region Name.Name Name.Name
+  | ImportNotFound A.Region Name.Name [ModuleName.Canonical]
+  | ImportOpenAlias A.Region Name.Name
+  | ImportExposingNotFound A.Region ModuleName.Canonical Name.Name [Name.Name]
+  | NotFoundVar A.Region (Maybe Name.Name) Name.Name PossibleNames
+  | NotFoundType A.Region (Maybe Name.Name) Name.Name PossibleNames
+  | NotFoundVariant A.Region (Maybe Name.Name) Name.Name PossibleNames
+  | NotFoundBinop A.Region Name.Name (Set.Set Name.Name)
+  | PatternHasRecordCtor A.Region Name.Name
+  | PortPayloadInvalid A.Region Name.Name Can.Type InvalidPayload
+  | PortTypeInvalid A.Region Name.Name PortProblem
+  | RecursiveAlias A.Region Name.Name [Name.Name] Src.Type [Name.Name]
+  | RecursiveDecl A.Region Name.Name [Name.Name]
+  | RecursiveLet (A.Located Name.Name) [Name.Name]
+  | Shadowing Name.Name A.Region A.Region
+  | TupleLargerThanThree A.Region
+  | TypeVarsUnboundInUnion A.Region Name.Name [Name.Name] (Name.Name, A.Region) [(Name.Name, A.Region)]
+  | TypeVarsMessedUpInAlias A.Region Name.Name [Name.Name] [(Name.Name, A.Region)] [(Name.Name, A.Region)]
 
 
 data BadArityContext
@@ -83,7 +85,7 @@ data BadArityContext
 
 data DuplicatePatternContext
   = DPLambdaArgs
-  | DPFuncArgs N.Name
+  | DPFuncArgs Name.Name
   | DPCaseBranch
   | DPLetBinding
   | DPDestruct
@@ -92,8 +94,8 @@ data DuplicatePatternContext
 data InvalidPayload
   = ExtendedRecord
   | Function
-  | TypeVariable N.Name
-  | UnsupportedType N.Name
+  | TypeVariable Name.Name
+  | UnsupportedType Name.Name
 
 
 data PortProblem
@@ -106,8 +108,8 @@ data PortProblem
 
 data PossibleNames =
   PossibleNames
-    { _locals :: Set.Set N.Name
-    , _quals :: Map.Map N.Name (Set.Set N.Name)
+    { _locals :: Set.Set Name.Name
+    , _quals :: Map.Map Name.Name (Set.Set Name.Name)
     }
 
 
@@ -122,20 +124,20 @@ data VarKind
   | BadType
 
 
-toKindInfo :: VarKind -> N.Name -> ( Doc, Doc, Doc )
+toKindInfo :: VarKind -> Name.Name -> ( Doc, Doc, Doc )
 toKindInfo kind name =
   case kind of
     BadOp ->
-      ( "an", "operator", "(" <> H.nameToDoc name <> ")" )
+      ( "an", "operator", "(" <> D.fromName name <> ")" )
 
     BadVar ->
-      ( "a", "value", "`" <> H.nameToDoc name <> "`" )
+      ( "a", "value", "`" <> D.fromName name <> "`" )
 
     BadPattern ->
-      ( "a", "pattern", "`" <> H.nameToDoc name <> "`" )
+      ( "a", "pattern", "`" <> D.fromName name <> "`" )
 
     BadType ->
-      ( "a", "type", "`" <> H.nameToDoc name <> "`" )
+      ( "a", "type", "`" <> D.fromName name <> "`" )
 
 
 
@@ -147,60 +149,61 @@ toReport source err =
   case err of
     AnnotationTooShort region name index leftovers ->
       let
-        numTypeArgs = Index.toHuman index
+        numTypeArgs = Index.toMachine index
         numDefArgs = numTypeArgs + leftovers
       in
       Report.Report "BAD TYPE ANNOTATION" region [] $
-        Report.toCodeSnippet source region Nothing
+        Code.toSnippet source region Nothing
           (
-            H.reflow $
-              "The type annotation for `" <> N.toString name <> "` says it can accept "
-              <> H.args numTypeArgs <> ", but the definition says it has "
-              <> H.args numDefArgs <> ":"
+            D.reflow $
+              "The type annotation for `" <> Name.toChars name <> "` says it can accept "
+              <> D.args numTypeArgs <> ", but the definition says it has "
+              <> D.args numDefArgs <> ":"
           ,
-            H.reflow $
+            D.reflow $
               "Is the type annotation missing something? Should some argument"
               <> (if leftovers == 1 then "" else "s")
               <> " be deleted? Maybe some parentheses are missing?"
           )
 
-    AmbiguousVar region maybePrefix name possibleHomes ->
-      ambiguousName source region maybePrefix name possibleHomes "variable"
+    AmbiguousVar region maybePrefix name h hs ->
+      ambiguousName source region maybePrefix name h hs "variable"
 
-    AmbiguousType region maybePrefix name possibleHomes ->
-      ambiguousName source region maybePrefix name possibleHomes "type"
+    AmbiguousType region maybePrefix name h hs ->
+      ambiguousName source region maybePrefix name h hs "type"
 
-    AmbiguousCtor region maybePrefix name possibleHomes ->
-      ambiguousName source region maybePrefix name possibleHomes "constructor"
+    AmbiguousVariant region maybePrefix name h hs ->
+      ambiguousName source region maybePrefix name h hs "variant"
 
-    AmbiguousBinop region name possibleHomes ->
-      ambiguousName source region Nothing name possibleHomes "operator"
+    AmbiguousBinop region name h hs ->
+      ambiguousName source region Nothing name h hs "operator"
 
     BadArity region badArityContext name expected actual ->
       let
         thing =
           case badArityContext of
             TypeArity    -> "type"
-            PatternArity -> "constructor"
+            PatternArity -> "variant"
       in
       if actual < expected then
         Report.Report "TOO FEW ARGS" region [] $
-          Report.toCodeSnippet source region Nothing
+          Code.toSnippet source region Nothing
             (
-              H.reflow $
-                "The `" <> N.toString name <> "` " <> thing <> " needs "
-                <> H.args expected <> ", but I only see " <> show actual <> ":"
+              D.reflow $
+                "The `" <> Name.toChars name <> "` " <> thing <> " needs "
+                <> D.args expected <> ", but I see " <> show actual <> " instead:"
             ,
-              "What is missing? Is there some typo?"
+              D.reflow $
+                "What is missing? Are some parentheses misplaced?"
             )
 
       else
         Report.Report "TOO MANY ARGS" region [] $
-          Report.toCodeSnippet source region Nothing
+          Code.toSnippet source region Nothing
             (
-              H.reflow $
-                "The `" <> N.toString name <> "` " <> thing <> " needs "
-                <> H.args expected <> ", but I see " <> show actual <> " instead:"
+              D.reflow $
+                "The `" <> Name.toChars name <> "` " <> thing <> " needs "
+                <> D.args expected <> ", but I see " <> show actual <> " instead:"
             ,
               if actual - expected == 1 then
                 "Which is the extra one? Maybe some parentheses are missing?"
@@ -210,98 +213,98 @@ toReport source err =
 
     Binop region op1 op2 ->
       Report.Report "INFIX PROBLEM" region [] $
-        Report.toCodeSnippet source region Nothing
+        Code.toSnippet source region Nothing
           (
-            H.reflow $
-              "You cannot mix (" <> N.toString op1 <> ") and (" <> N.toString op2 <> ") without parentheses."
+            D.reflow $
+              "You cannot mix (" <> Name.toChars op1 <> ") and (" <> Name.toChars op2 <> ") without parentheses."
           ,
-            H.reflow
+            D.reflow
               "I do not know how to group these expressions. Add parentheses for me!"
           )
 
     DuplicateDecl name r1 r2 ->
       nameClash source r1 r2 $
-        "This file has multiple `" <> N.toString name <> "` declarations."
+        "This file has multiple `" <> Name.toChars name <> "` declarations."
 
     DuplicateType name r1 r2 ->
       nameClash source r1 r2 $
-        "This file defines multiple `" <> N.toString name <> "` types."
+        "This file defines multiple `" <> Name.toChars name <> "` types."
 
     DuplicateCtor name r1 r2 ->
       nameClash source r1 r2 $
-        "This file defines multiple `" <> N.toString name <> "` type constructors."
+        "This file defines multiple `" <> Name.toChars name <> "` type constructors."
 
     DuplicateBinop name r1 r2 ->
       nameClash source r1 r2 $
-        "This file defines multiple (" <> N.toString name <> ") operators."
+        "This file defines multiple (" <> Name.toChars name <> ") operators."
 
     DuplicateField name r1 r2 ->
       nameClash source r1 r2 $
-        "This record has multiple `" <> N.toString name <> "` fields."
+        "This record has multiple `" <> Name.toChars name <> "` fields."
 
     DuplicateAliasArg typeName name r1 r2 ->
       nameClash source r1 r2 $
-        "The `" <> N.toString typeName <> "` type alias has multilpe `" <> N.toString name <> "` type variables."
+        "The `" <> Name.toChars typeName <> "` type alias has multiple `" <> Name.toChars name <> "` type variables."
 
     DuplicateUnionArg typeName name r1 r2 ->
       nameClash source r1 r2 $
-        "The `" <> N.toString typeName <> "` type has multilpe `" <> N.toString name <> "` type variables."
+        "The `" <> Name.toChars typeName <> "` type has multiple `" <> Name.toChars name <> "` type variables."
 
     DuplicatePattern context name r1 r2 ->
       nameClash source r1 r2 $
         case context of
           DPLambdaArgs ->
-            "This anonymous function has multiple `" <> N.toString name <> "` arguments."
+            "This anonymous function has multiple `" <> Name.toChars name <> "` arguments."
 
           DPFuncArgs funcName ->
-            "The `" <> N.toString funcName <> "` function has multiple `" <> N.toString name <> "` arguments."
+            "The `" <> Name.toChars funcName <> "` function has multiple `" <> Name.toChars name <> "` arguments."
 
           DPCaseBranch ->
-            "This `case` pattern has multiple `" <> N.toString name <> "` variables."
+            "This `case` pattern has multiple `" <> Name.toChars name <> "` variables."
 
           DPLetBinding ->
-            "This `let` expression defines `" <> N.toString name <> "` more than once!"
+            "This `let` expression defines `" <> Name.toChars name <> "` more than once!"
 
           DPDestruct ->
-            "This pattern contains multiple `" <> N.toString name <> "` variables."
+            "This pattern contains multiple `" <> Name.toChars name <> "` variables."
 
     EffectNotFound region name ->
       Report.Report "EFFECT PROBLEM" region [] $
-        Report.toCodeSnippet source region Nothing
+        Code.toSnippet source region Nothing
           (
-            H.reflow $
-              "You have declared that `" ++ N.toString name ++ "` is an effect type:"
+            D.reflow $
+              "You have declared that `" ++ Name.toChars name ++ "` is an effect type:"
           ,
-            H.reflow $
-              "But I cannot find a union type named `" ++ N.toString name ++ "` in this file!"
+            D.reflow $
+              "But I cannot find a custom type named `" ++ Name.toChars name ++ "` in this file!"
           )
 
     EffectFunctionNotFound region name ->
       Report.Report "EFFECT PROBLEM" region [] $
-        Report.toCodeSnippet source region Nothing
+        Code.toSnippet source region Nothing
           (
-            H.reflow $
-              "This kind of effect module must define a `" ++ N.toString name ++ "` function."
+            D.reflow $
+              "This kind of effect module must define a `" ++ Name.toChars name ++ "` function."
           ,
-            H.reflow $
-              "But I cannot find `" ++ N.toString name ++ "` in this file!"
+            D.reflow $
+              "But I cannot find `" ++ Name.toChars name ++ "` in this file!"
           )
 
 
     ExportDuplicate name r1 r2 ->
       let
         messageThatEndsWithPunctuation =
-          "You are trying to expose `" <> N.toString name <> "` multiple times!"
+          "You are trying to expose `" <> Name.toChars name <> "` multiple times!"
       in
       Report.Report "REDUNDANT EXPORT" r2 [] $
-        Report.toCodePair source r1 r2
+        Code.toPair source r1 r2
           (
-            H.reflow messageThatEndsWithPunctuation
+            D.reflow messageThatEndsWithPunctuation
           ,
             "Remove one of them and you should be all set!"
           )
           (
-            H.reflow (messageThatEndsWithPunctuation <> " Once here:")
+            D.reflow (messageThatEndsWithPunctuation <> " Once here:")
           ,
             "And again right here:"
           ,
@@ -311,56 +314,56 @@ toReport source err =
     ExportNotFound region kind rawName possibleNames ->
       let
         suggestions =
-          map N.toString $ take 4 $
-            H.nearbyNames N.toString rawName possibleNames
+          map Name.toChars $ take 4 $
+            Suggest.sort (Name.toChars rawName) Name.toChars possibleNames
       in
       Report.Report "UNKNOWN EXPORT" region suggestions $
         let (a, thing, name) = toKindInfo kind rawName in
-        H.stack
-          [ H.fillSep
+        D.stack
+          [ D.fillSep
               ["You","are","trying","to","expose",a,thing,"named"
               ,name,"but","I","cannot","find","its","definition."
               ]
-          , case map H.text suggestions of
+          , case map D.fromChars suggestions of
               [] ->
-                H.reflow $
+                D.reflow $
                   "I do not see any super similar names in this file. Is the definition missing?"
 
               [alt] ->
-                H.fillSep ["Maybe","you","want",H.dullyellow alt,"instead?"]
+                D.fillSep ["Maybe","you","want",D.dullyellow alt,"instead?"]
 
               alts ->
-                H.stack
+                D.stack
                   [ "These names seem close though:"
-                  , H.indent 4 $ H.vcat $ map H.dullyellow alts
+                  , D.indent 4 $ D.vcat $ map D.dullyellow alts
                   ]
           ]
 
     ExportOpenAlias region name ->
       Report.Report "BAD EXPORT" region [] $
-        Report.toCodeSnippet source region Nothing
+        Code.toSnippet source region Nothing
           (
-            H.reflow $
-              "The (..) syntax is for exposing union type constructors. It cannot be used with a type alias like `"
-              ++ N.toString name ++ "` though."
+            D.reflow $
+              "The (..) syntax is for exposing variants of a custom type. It cannot be used with a type alias like `"
+              ++ Name.toChars name ++ "` though."
           ,
-            H.reflow $
+            D.reflow $
               "Remove the (..) and you should be fine!"
           )
 
     ImportCtorByName region ctor tipe ->
       Report.Report "BAD IMPORT" region [] $
-        Report.toCodeSnippet source region Nothing
+        Code.toSnippet source region Nothing
           (
-            H.reflow $
-              "You are trying to import the `" <> N.toString ctor
-              <> "` type constructor by name:"
+            D.reflow $
+              "You are trying to import the `" <> Name.toChars ctor
+              <> "` variant by name:"
           ,
-            H.fillSep
-              ["Try","importing",H.green (H.nameToDoc tipe <> "(..)"),"instead."
-              ,"The","dots","mean","“expose","the",H.nameToDoc tipe,"type","and"
-              ,"all","its","constructors”","so","it","gives","you","access","to"
-              , H.nameToDoc ctor <> "."
+            D.fillSep
+              ["Try","importing",D.green (D.fromName tipe <> "(..)"),"instead."
+              ,"The","dots","mean","“expose","the",D.fromName tipe,"type","and"
+              ,"all","its","variants","so","it","gives","you","access","to"
+              , D.fromName ctor <> "."
               ]
           )
 
@@ -370,55 +373,50 @@ toReport source err =
       -- So this error should never actually get printed out.
       --
       Report.Report "UNKNOWN IMPORT" region [] $
-        Report.toCodeSnippet source region Nothing
+        Code.toSnippet source region Nothing
           (
-            H.reflow $
-              "I could not find a `" <> N.toString name <> "` module to import!"
+            D.reflow $
+              "I could not find a `" <> Name.toChars name <> "` module to import!"
           ,
             mempty
           )
 
     ImportOpenAlias region name ->
       Report.Report "BAD IMPORT" region [] $
-        Report.toCodeSnippet source region Nothing
+        Code.toSnippet source region Nothing
           (
-            H.reflow $
-              "The `" <> N.toString name <> "` type alias cannot be followed by (..) like this:"
+            D.reflow $
+              "The `" <> Name.toChars name <> "` type alias cannot be followed by (..) like this:"
           ,
-            H.stack
-              [ "Remove the (..) and it should work."
-              , H.link "Hint"
-                  "The distinction between `type` and `type alias` is important here. Read"
-                  "types-vs-type-aliases"
-                  "to learn more."
-              ]
+            D.reflow $
+              "Remove the (..) and it should work."
           )
 
     ImportExposingNotFound region (ModuleName.Canonical _ home) value possibleNames ->
       let
         suggestions =
-          map N.toString $ take 4 $
-            H.nearbyNames N.toString home possibleNames
+          map Name.toChars $ take 4 $
+            Suggest.sort (Name.toChars home) Name.toChars possibleNames
       in
       Report.Report "BAD IMPORT" region suggestions $
-        Report.toCodeSnippet source region Nothing
+        Code.toSnippet source region Nothing
           (
-            H.reflow $
-              "The `" <> N.toString home
+            D.reflow $
+              "The `" <> Name.toChars home
               <> "` module does not expose `"
-              <> N.toString value <> "`:"
+              <> Name.toChars value <> "`:"
           ,
-            case map H.text suggestions of
+            case map D.fromChars suggestions of
               [] ->
-                "I cannot find an super similar exposed names. Maybe it is private?"
+                "I cannot find any super similar exposed names. Maybe it is private?"
 
               [alt] ->
-                H.fillSep ["Maybe","you","want",H.dullyellow alt,"instead?"]
+                D.fillSep ["Maybe","you","want",D.dullyellow alt,"instead?"]
 
               alts ->
-                H.stack
+                D.stack
                   [ "These names seem close though:"
-                  , H.indent 4 $ H.vcat $ map H.dullyellow alts
+                  , D.indent 4 $ D.vcat $ map D.dullyellow alts
                   ]
           )
 
@@ -428,13 +426,13 @@ toReport source err =
     NotFoundType region prefix name possibleNames ->
       notFound source region prefix name "type" possibleNames
 
-    NotFoundCtor region prefix name possibleNames ->
-      notFound source region prefix name "constructor" possibleNames
+    NotFoundVariant region prefix name possibleNames ->
+      notFound source region prefix name "variant" possibleNames
 
     NotFoundBinop region op locals ->
       if op == "===" then
         Report.Report "UNKNOWN OPERATOR" region ["=="] $
-          Report.toCodeSnippet source region Nothing
+          Code.toSnippet source region Nothing
             (
               "Elm does not have a (===) operator like JavaScript."
             ,
@@ -443,80 +441,99 @@ toReport source err =
 
       else if op == "!=" || op == "!==" then
         Report.Report "UNKNOWN OPERATOR" region ["/="] $
-          Report.toCodeSnippet source region Nothing
+          Code.toSnippet source region Nothing
             (
-              H.reflow $
+              D.reflow $
                 "Elm uses a different name for the “not equal” operator:"
             ,
-              H.stack
-                [ H.reflow "Switch to (/=) instead."
-                , H.toSimpleNote $
+              D.stack
+                [ D.reflow "Switch to (/=) instead."
+                , D.toSimpleNote $
                     "Our (/=) operator is supposed to look like a real “not equal” sign (≠). I hope that history will remember ("
-                    ++ N.toString op ++ ") as a werid and temporary choice."
+                    ++ Name.toChars op ++ ") as a weird and temporary choice."
                 ]
             )
 
       else if op == "**" then
         Report.Report "UNKNOWN OPERATOR" region ["^","*"] $
-          Report.toCodeSnippet source region Nothing
+          Code.toSnippet source region Nothing
             (
-              H.reflow $
-                "I do not recognize this (**) operator:"
+              D.reflow $
+                "I do not recognize the (**) operator:"
             ,
-              H.reflow $
+              D.reflow $
                 "Switch to (^) for exponentiation. Or switch to (*) for multiplication."
+            )
+
+      else if op == "%" then
+        Report.Report "UNKNOWN OPERATOR" region [] $
+          Code.toSnippet source region Nothing
+            (
+              D.reflow $
+                "Elm does not use (%) as the remainder operator:"
+            ,
+              D.stack
+                [ D.reflow $
+                    "If you want the behavior of (%) like in JavaScript, switch to:\
+                    \ <https://package.elm-lang.org/packages/elm/core/latest/Basics#remainderBy>"
+                , D.reflow $
+                    "If you want modular arithmetic like in math, switch to:\
+                    \ <https://package.elm-lang.org/packages/elm/core/latest/Basics#modBy>"
+                , D.reflow $
+                    "The difference is how things work when negative numbers are involved."
+                ]
             )
 
       else
         let
           suggestions =
-            map N.toString $ take 2 $
-              H.nearbyNames N.toString op (Set.toList locals)
+            map Name.toChars $ take 2 $
+              Suggest.sort (Name.toChars op) Name.toChars (Set.toList locals)
 
           format altOp =
-            H.dullyellow $ "(" <> altOp <> ")"
+            D.green $ "(" <> altOp <> ")"
         in
         Report.Report "UNKNOWN OPERATOR" region suggestions $
-          Report.toCodeSnippet source region Nothing
+          Code.toSnippet source region Nothing
             (
-              H.reflow $
-                "I do not recognize this (" ++ N.toString op ++ ") operator."
+              D.reflow $
+                "I do not recognize the (" ++ Name.toChars op ++ ") operator."
             ,
-              H.fillSep $
+              D.fillSep $
                 ["Is","there","an","`import`","and","`exposing`","entry","for","it?"]
                 ++
-                  case map H.text suggestions of
+                  case map D.fromChars suggestions of
                     [] ->
                       []
 
                     alts ->
-                      ["Maybe","you","want"] ++ H.commaSep "or" format alts ++ ["instead?"]
+                      ["Maybe","you","want"] ++ D.commaSep "or" format alts ++ ["instead?"]
             )
 
     PatternHasRecordCtor region name ->
       Report.Report "BAD PATTERN" region [] $
-        Report.toCodeSnippet source region Nothing
+        Code.toSnippet source region Nothing
           (
-            H.reflow $
-              "You can construct records by using `" <> N.toString name
+            D.reflow $
+              "You can construct records by using `" <> Name.toChars name
               <> "` as a function, but it is not available in pattern matching like this:"
           ,
-            H.reflow $
-              "I recommend matching matching the record as a variable and unpacking it later."
+            D.reflow $
+              "I recommend matching the record as a variable and unpacking it later."
           )
 
     PortPayloadInvalid region portName _badType invalidPayload ->
       let
         formatDetails (aBadKindOfThing, elaboration) =
           Report.Report "PORT ERROR" region [] $
-            Report.toCodeSnippet source region Nothing
+            Code.toSnippet source region Nothing
               (
-                H.reflow $
-                  "The `" <> N.toString portName <> "` port is trying to transmit " <> aBadKindOfThing <> ":"
+                D.reflow $
+                  "The `" <> Name.toChars portName <> "` port is trying to transmit " <> aBadKindOfThing <> ":"
               ,
-                H.stack
+                D.stack
                   [ elaboration
-                  , H.link "Hint"
+                  , D.link "Hint"
                       "Ports are not a traditional FFI, so if you have tons of annoying ports, definitely read"
                       "ports"
                       "to learn how they are meant to work. They require a different mindset!"
@@ -529,7 +546,7 @@ toReport source err =
             (
               "an extended record"
             ,
-              H.reflow $
+              D.reflow $
                 "But the exact shape of the record must be known at compile time. No type variables!"
             )
 
@@ -537,7 +554,7 @@ toReport source err =
             (
               "a function"
             ,
-              H.reflow $
+              D.reflow $
                 "But functions cannot be sent in and out ports. If we allowed functions in from JS\
                 \ they may perform some side-effects. If we let functions out, they could produce\
                 \ incorrect results because Elm optimizations assume there are no side-effects."
@@ -548,23 +565,23 @@ toReport source err =
             (
               "an unspecified type"
             ,
-              H.reflow $
-                "But type variables like `" <> N.toString name <> "` cannot flow through ports.\
+              D.reflow $
+                "But type variables like `" <> Name.toChars name <> "` cannot flow through ports.\
                 \ I need to know exactly what type of data I am getting, so I can guarantee that\
                 \ unexpected data cannot sneak in and crash the Elm program."
             )
 
           UnsupportedType name ->
             (
-              "a `" <> N.toString name <> "` value"
+              "a `" <> Name.toChars name <> "` value"
             ,
-              H.stack
-                [ H.reflow $ "I cannot handle that. The types that CAN flow in and out of Elm include:"
-                , H.indent 4 $
-                    H.reflow $
+              D.stack
+                [ D.reflow $ "I cannot handle that. The types that CAN flow in and out of Elm include:"
+                , D.indent 4 $
+                    D.reflow $
                       "Ints, Floats, Bools, Strings, Maybes, Lists, Arrays,\
                       \ tuples, records, and JSON values."
-                , H.reflow $
+                , D.reflow $
                     "Since JSON values can flow through, you can use JSON encoders and decoders\
                     \ to allow other types through as well. More advanced users often just do\
                     \ everything with encoders and decoders for more control and better errors."
@@ -575,13 +592,13 @@ toReport source err =
       let
         formatDetails (before, after) =
           Report.Report "BAD PORT" region [] $
-            Report.toCodeSnippet source region Nothing $
+            Code.toSnippet source region Nothing $
               (
-                H.reflow before
+                D.reflow before
               ,
-                H.stack
+                D.stack
                   [ after
-                  , H.link "Hint" "Read" "ports"
+                  , D.link "Hint" "Read" "ports"
                       "for more advice. For example, do not end up with one port per JS function!"
                   ]
               )
@@ -590,16 +607,16 @@ toReport source err =
         case portProblem of
           CmdNoArg ->
             (
-              "The `" <> N.toString name <> "` port cannot be just a command."
+              "The `" <> Name.toChars name <> "` port cannot be just a command."
             ,
-              H.reflow $
+              D.reflow $
                 "It can be (() -> Cmd msg) if you just need to trigger a JavaScript\
                 \ function, but there is often a better way to set things up."
             )
 
           CmdExtraArgs n ->
             (
-              "The `" <> N.toString name <> "` port can only send ONE value out to JavaScript."
+              "The `" <> Name.toChars name <> "` port can only send ONE value out to JavaScript."
             ,
               let
                 theseItemsInSomething
@@ -607,29 +624,29 @@ toReport source err =
                   | n == 3 = "these " ++ show n ++ " items into a tuple or record"
                   | True   = "these " ++ show n ++ " items into a record"
               in
-              H.reflow $
+              D.reflow $
                 "You can put " ++ theseItemsInSomething ++ " to send them out though."
             )
 
           CmdBadMsg ->
             (
-              "The `" <> N.toString name <> "` port cannot send any messages to the `update` function."
+              "The `" <> Name.toChars name <> "` port cannot send any messages to the `update` function."
             ,
-              H.reflow $
+              D.reflow $
                 "It must produce a (Cmd msg) type. Notice the lower case `msg` type\
                 \ variable. The command will trigger some JS code, but it will not send\
                 \ anything particular back to Elm."
             )
 
           SubBad ->
-            ( "There is something off about this `" <> N.toString name <> "` port declaration."
+            ( "There is something off about this `" <> Name.toChars name <> "` port declaration."
             ,
-              H.stack
-                [ H.reflow $
+              D.stack
+                [ D.reflow $
                     "To receive messages from JavaScript, you need to define a port like this:"
-                , H.indent 4 $ H.dullyellow $ H.text $
-                    "port " <> N.toString name <> " : (Int -> msg) -> Sub msg"
-                , H.reflow $
+                , D.indent 4 $ D.dullyellow $ D.fromChars $
+                    "port " <> Name.toChars name <> " : (Int -> msg) -> Sub msg"
+                , D.reflow $
                     "Now every time JS sends an `Int` to this port, it is converted to a `msg`.\
                     \ And if you subscribe, those `msg` values will be piped into your `update`\
                     \ function. The only thing you can customize here is the `Int` type."
@@ -638,9 +655,9 @@ toReport source err =
 
           NotCmdOrSub ->
             (
-              "I am confused about the `" <> N.toString name <> "` port declaration."
+              "I am confused about the `" <> Name.toChars name <> "` port declaration."
             ,
-              H.reflow $
+              D.reflow $
                 "Ports need to produce a command (Cmd) or a subscription (Sub) but\
                 \ this is neither. I do not know how to handle this."
             )
@@ -648,88 +665,75 @@ toReport source err =
     RecursiveAlias region name args tipe others ->
         aliasRecursionReport source region name args tipe others
 
-    RecursiveDecl cyclicValueDefs ->
+    RecursiveDecl region name names ->
       let
-        toName def =
-          case def of
-            Can.Def name _ _ -> name
-            Can.TypedDef name _ _ _ _ -> name
-
         makeTheory question details =
-          H.fillSep $ map (H.dullyellow . H.text) (words question) ++ map H.text (words details)
+          D.fillSep $ map (D.dullyellow . D.fromChars) (words question) ++ map D.fromChars (words details)
       in
-      case map toName cyclicValueDefs of
-        [] ->
-          error
-            "There is some compiler bug in reporting cyclic definitions.\n\
-            \Please get a <http://sscce.org/> and share the details at\n\
-            \<https://github.com/elm-lang/elm-compiler/issues>"
+      Report.Report "CYCLIC DEFINITION" region [] $
+        Code.toSnippet source region Nothing $
+          case names of
+            [] ->
+              (
+                D.reflow $
+                  "The `" <> Name.toChars name <> "` value is defined directly in terms of itself, causing an infinite loop."
+              ,
+                D.stack
+                  [ makeTheory "Are you trying to mutate a variable?" $
+                      "Elm does not have mutation, so when I see " ++ Name.toChars name
+                      ++ " defined in terms of " ++ Name.toChars name
+                      ++ ", I treat it as a recursive definition. Try giving the new value a new name!"
+                  , makeTheory "Maybe you DO want a recursive value?" $
+                      "To define " ++ Name.toChars name ++ " we need to know what " ++ Name.toChars name
+                      ++ " is, so let’s expand it. Wait, but now we need to know what " ++ Name.toChars name
+                      ++ " is, so let’s expand it... This will keep going infinitely!"
+                  , D.link "Hint"
+                      "The root problem is often a typo in some variable name, but I recommend reading"
+                      "bad-recursion"
+                      "for more detailed advice, especially if you actually do need a recursive value."
+                  ]
+              )
 
-        A.At region name : otherNames ->
-          Report.Report "CYCLIC DEFINITION" region [] $
-            Report.toCodeSnippet source region Nothing $
-              case map A.toValue otherNames of
-                [] ->
-                  (
-                    H.reflow $
-                      "The `" <> N.toString name <> "` value is defined directly in terms of itself, causing an infinite loop."
-                  ,
-                    H.stack
-                      [ makeTheory "Are you are trying to mutate a variable?" $
-                          "Elm does not have mutation, so when I see " ++ N.toString name
-                          ++ " defined in terms of " ++ N.toString name
-                          ++ ", I treat it as a recursive definition. Try giving the new value a new name!"
-                      , makeTheory "Maybe you DO want a recursive value?" $
-                          "To define " ++ N.toString name ++ " we need to know what " ++ N.toString name
-                          ++ " is, so let’s expand it. Wait, but now we need to know what " ++ N.toString name
-                          ++ " is, so let’s expand it... This will keep going infinitely!"
-                      , H.link "Hint"
-                          "The root problem is often a typo in some variable name, but I recommend reading"
-                          "bad-recursion"
-                          "for more detailed advice, especially if you actually do need a recursive value."
-                      ]
-                  )
-
-                names ->
-                  (
-                    H.reflow $
-                      "The `" <> N.toString name <> "` definition is causing a very tricky infinite loop."
-                  ,
-                    H.stack
-                      [ H.reflow $
-                          "The `" <> N.toString name
-                          <> "` value depends on itself through the following chain of definitions:"
-                      , H.indent 4 $ H.drawCycle (name:names)
-                      , H.link "Hint"
-                          "The root problem is often a typo in some variable name, but I recommend reading"
-                          "bad-recursion"
-                          "for more detailed advice, especially if you actually do want mutually recursive values."
-                      ]
-                  )
+            _:_ ->
+              (
+                D.reflow $
+                  "The `" <> Name.toChars name <> "` definition is causing a very tricky infinite loop."
+              ,
+                D.stack
+                  [ D.reflow $
+                      "The `" <> Name.toChars name
+                      <> "` value depends on itself through the following chain of definitions:"
+                  , D.cycle 4 name names
+                  , D.link "Hint"
+                      "The root problem is often a typo in some variable name, but I recommend reading"
+                      "bad-recursion"
+                      "for more detailed advice, especially if you actually do want mutually recursive values."
+                  ]
+              )
 
     RecursiveLet (A.At region name) names ->
       Report.Report "CYCLIC VALUE" region [] $
-        Report.toCodeSnippet source region Nothing $
+        Code.toSnippet source region Nothing $
           case names of
             [] ->
               let
                 makeTheory question details =
-                  H.fillSep $ map (H.dullyellow . H.text) (words question) ++ map H.text (words details)
+                  D.fillSep $ map (D.dullyellow . D.fromChars) (words question) ++ map D.fromChars (words details)
               in
                 (
-                  H.reflow $
-                    "The `" <> N.toString name <> "` value is defined directly in terms of itself, causing an infinite loop."
+                  D.reflow $
+                    "The `" <> Name.toChars name <> "` value is defined directly in terms of itself, causing an infinite loop."
                 ,
-                  H.stack
-                    [ makeTheory "Are you are trying to mutate a variable?" $
-                        "Elm does not have mutation, so when I see " ++ N.toString name
-                        ++ " defined in terms of " ++ N.toString name
+                  D.stack
+                    [ makeTheory "Are you trying to mutate a variable?" $
+                        "Elm does not have mutation, so when I see " ++ Name.toChars name
+                        ++ " defined in terms of " ++ Name.toChars name
                         ++ ", I treat it as a recursive definition. Try giving the new value a new name!"
                     , makeTheory "Maybe you DO want a recursive value?" $
-                        "To define " ++ N.toString name ++ " we need to know what " ++ N.toString name
-                        ++ " is, so let’s expand it. Wait, but now we need to know what " ++ N.toString name
+                        "To define " ++ Name.toChars name ++ " we need to know what " ++ Name.toChars name
+                        ++ " is, so let’s expand it. Wait, but now we need to know what " ++ Name.toChars name
                         ++ " is, so let’s expand it... This will keep going infinitely!"
-                    , H.link "Hint"
+                    , D.link "Hint"
                         "The root problem is often a typo in some variable name, but I recommend reading"
                         "bad-recursion"
                         "for more detailed advice, especially if you actually do need a recursive value."
@@ -738,15 +742,15 @@ toReport source err =
 
             _ ->
                 (
-                  H.reflow $
+                  D.reflow $
                     "I do not allow cyclic values in `let` expressions."
                 ,
-                  H.stack
-                    [ H.reflow $
-                        "The `" <> N.toString name
+                  D.stack
+                    [ D.reflow $
+                        "The `" <> Name.toChars name
                         <> "` value depends on itself through the following chain of definitions:"
-                    , H.indent 4 $ H.drawCycle (name:names)
-                    , H.link "Hint"
+                    , D.cycle 4 name names
+                    , D.link "Hint"
                         "The root problem is often a typo in some variable name, but I recommend reading"
                         "bad-recursion"
                         "for more detailed advice, especially if you actually do want mutually recursive values."
@@ -755,20 +759,20 @@ toReport source err =
 
     Shadowing name r1 r2 ->
       Report.Report "SHADOWING" r2 [] $
-        Report.toCodePair source r1 r2
+        Code.toPair source r1 r2
           ( "These variables cannot have the same name:"
           , advice
           )
-          ( H.reflow $ "The name `" <> N.toString name <> "` is first defined here:"
+          ( D.reflow $ "The name `" <> Name.toChars name <> "` is first defined here:"
           , "But then it is defined AGAIN over here:"
           , advice
           )
       where
         advice =
-          H.stack
-            [ H.reflow $
+          D.stack
+            [ D.reflow $
                 "Think of a more helpful name for one of them and you should be all set!"
-            , H.link "Note"
+            , D.link "Note"
                 "Linters advise against shadowing, so Elm makes “best practices” the default. Read"
                 "shadowing"
                 "for more details on this choice."
@@ -776,16 +780,16 @@ toReport source err =
 
     TupleLargerThanThree region ->
       Report.Report "BAD TUPLE" region [] $
-        Report.toCodeSnippet source region Nothing
+        Code.toSnippet source region Nothing
           (
             "I only accept tuples with two or three items. This has too many:"
           ,
-            H.stack
-              [ H.reflow $
+            D.stack
+              [ D.reflow $
                   "I recommend switching to records. Each item will be named, and you can use\
                   \ the `point.x` syntax to access them."
 
-              , H.link "Note" "Read" "tuples"
+              , D.link "Note" "Read" "tuples"
 
                   "for more comprehensive advice on working with large chunks of data in Elm."
               ]
@@ -799,7 +803,7 @@ toReport source err =
         (unused:unuseds, []) ->
           let
             backQuote name =
-              "`" <> H.nameToDoc name <> "`"
+              "`" <> D.fromName name <> "`"
 
             allUnusedNames =
               map fst unusedVars
@@ -812,31 +816,31 @@ toReport source err =
                   , ["Type","alias",backQuote typeName,"does","not","use","the"
                     ,backQuote (fst unused),"type","variable."
                     ]
-                  , [H.dullyellow (backQuote (fst unused))]
+                  , [D.dullyellow (backQuote (fst unused))]
                   )
 
                 _:_ ->
                   ( "UNUSED TYPE VARIABLES"
                   , Nothing
                   , ["Type","variables"]
-                    ++ H.commaSep "and" id (map H.nameToDoc allUnusedNames)
+                    ++ D.commaSep "and" id (map D.fromName allUnusedNames)
                     ++ ["are","unused","in","the",backQuote typeName,"definition."]
-                  , H.commaSep "and" H.dullyellow (map H.nameToDoc allUnusedNames)
+                  , D.commaSep "and" D.dullyellow (map D.fromName allUnusedNames)
                   )
           in
           Report.Report title aliasRegion [] $
-            Report.toCodeSnippet source aliasRegion subRegion
+            Code.toSnippet source aliasRegion subRegion
               (
-                H.fillSep overview
+                D.fillSep overview
               ,
-                H.stack
-                  [ H.fillSep $
+                D.stack
+                  [ D.fillSep $
                       ["I","recommend","removing"] ++ stuff ++ ["from","the","declaration,","like","this:"]
-                  , H.indent 4 $ H.hsep $
-                      ["type","alias",H.green (H.nameToDoc typeName)]
-                      ++ map H.nameToDoc (filter (`notElem` allUnusedNames) allVars)
+                  , D.indent 4 $ D.hsep $
+                      ["type","alias",D.green (D.fromName typeName)]
+                      ++ map D.fromName (filter (`notElem` allUnusedNames) allVars)
                       ++ ["=", "..."]
-                  , H.reflow $
+                  , D.reflow $
                       "Why? Well, if I allowed `type alias Height a = Float` I would need to answer\
                       \ some weird questions. Is `Height Bool` the same as `Float`? Is `Height Bool`\
                       \ the same as `Height Int`? My solution is to not need to ask them!"
@@ -854,43 +858,43 @@ toReport source err =
             theseAreUsed =
               case unbound of
                 [x] ->
-                  ["Type","variable",H.dullyellow ("`" <> H.nameToDoc x <> "`"),"appears"
+                  ["Type","variable",D.dullyellow ("`" <> D.fromName x <> "`"),"appears"
                   ,"in","the","definition,","but","I","do","not","see","it","declared."
                   ]
 
                 _ ->
                   ["Type","variables"]
-                  ++ H.commaSep "and" H.dullyellow (map H.nameToDoc unbound)
+                  ++ D.commaSep "and" D.dullyellow (map D.fromName unbound)
                   ++ ["are","used","in","the","definition,","but","I","do","not","see","them","declared."]
 
             butTheseAreUnused =
               case unused of
                 [x] ->
                   ["Likewise,","type","variable"
-                  ,H.dullyellow ("`" <> H.nameToDoc x <> "`")
+                  ,D.dullyellow ("`" <> D.fromName x <> "`")
                   ,"is","delared,","but","not","used."
                   ]
 
                 _ ->
                   ["Likewise,","type","variables"]
-                  ++ H.commaSep "and" H.dullyellow (map H.nameToDoc unused)
+                  ++ D.commaSep "and" D.dullyellow (map D.fromName unused)
                   ++ ["are","delared,","but","not","used."]
 
           in
           Report.Report "TYPE VARIABLE PROBLEMS" aliasRegion [] $
-            Report.toCodeSnippet source aliasRegion Nothing
+            Code.toSnippet source aliasRegion Nothing
               (
-                H.reflow $
-                  "Type alias `" <> N.toString typeName <> "` has some type variable problems."
+                D.reflow $
+                  "Type alias `" <> Name.toChars typeName <> "` has some type variable problems."
               ,
-                H.stack
-                  [ H.fillSep $ theseAreUsed ++ butTheseAreUnused
-                  , H.reflow $
+                D.stack
+                  [ D.fillSep $ theseAreUsed ++ butTheseAreUnused
+                  , D.reflow $
                       "My guess is that a definition like this will work better:"
-                  , H.indent 4 $ H.hsep $
-                      ["type", "alias", H.nameToDoc typeName]
-                      ++ map H.nameToDoc (filter (`notElem` unused) allVars)
-                      ++ map (H.green . H.nameToDoc) unbound
+                  , D.indent 4 $ D.hsep $
+                      ["type", "alias", D.fromName typeName]
+                      ++ map D.fromName (filter (`notElem` unused) allVars)
+                      ++ map (D.green . D.fromName) unbound
                       ++ ["=", "..."]
                   ]
               )
@@ -900,11 +904,11 @@ toReport source err =
 -- BAD TYPE VARIABLES
 
 
-unboundTypeVars :: Code.Source -> R.Region -> [H.Doc] -> N.Name -> [N.Name] -> (N.Name, R.Region) -> [(N.Name, R.Region)] -> Report.Report
+unboundTypeVars :: Code.Source -> A.Region -> [D.Doc] -> Name.Name -> [Name.Name] -> (Name.Name, A.Region) -> [(Name.Name, A.Region)] -> Report.Report
 unboundTypeVars source declRegion tipe typeName allVars (unboundVar, varRegion) unboundVars =
   let
     backQuote name =
-      "`" <> H.nameToDoc name <> "`"
+      "`" <> D.fromName name <> "`"
 
     (title, subRegion, overview) =
       case map fst unboundVars of
@@ -913,33 +917,33 @@ unboundTypeVars source declRegion tipe typeName allVars (unboundVar, varRegion) 
           , Just varRegion
           , ["The",backQuote typeName]
             ++ tipe
-            ++ ["uses","an","unbound","type","variable",H.dullyellow (backQuote unboundVar),"in","its","definition:"]
+            ++ ["uses","an","unbound","type","variable",D.dullyellow (backQuote unboundVar),"in","its","definition:"]
           )
 
         vars ->
           ( "UNBOUND TYPE VARIABLES"
           , Nothing
           , ["Type","variables"]
-            ++ H.commaSep "and" H.dullyellow (H.nameToDoc unboundVar : map H.nameToDoc vars)
+            ++ D.commaSep "and" D.dullyellow (D.fromName unboundVar : map D.fromName vars)
             ++ ["are","unbound","in","the",backQuote typeName] ++ tipe ++ ["definition:"]
           )
   in
   Report.Report title declRegion [] $
-    Report.toCodeSnippet source declRegion subRegion
+    Code.toSnippet source declRegion subRegion
       (
-        H.fillSep overview
+        D.fillSep overview
       ,
-        H.stack
-          [ H.reflow $
+        D.stack
+          [ D.reflow $
               "You probably need to change the declaration to something like this:"
-          , H.indent 4 $ H.hsep $
+          , D.indent 4 $ D.hsep $
               tipe
-              ++ [H.nameToDoc typeName]
-              ++ map H.nameToDoc allVars
-              ++ map (H.green . H.nameToDoc) (unboundVar : map fst unboundVars)
+              ++ [D.fromName typeName]
+              ++ map D.fromName allVars
+              ++ map (D.green . D.fromName) (unboundVar : map fst unboundVars)
               ++ ["=", "..."]
-          , H.reflow $
-              "Why? Well, imagine one `" ++ N.toString typeName ++ "` where `" ++ N.toString unboundVar ++
+          , D.reflow $
+              "Why? Well, imagine one `" ++ Name.toChars typeName ++ "` where `" ++ Name.toChars unboundVar ++
               "` is an Int and another where it is a Bool. When we explicitly list the type\
               \ variables, the type checker can see that they are actually different types."
           ]
@@ -950,17 +954,17 @@ unboundTypeVars source declRegion tipe typeName allVars (unboundVar, varRegion) 
 -- NAME CLASH
 
 
-nameClash :: Code.Source -> R.Region -> R.Region -> String -> Report.Report
+nameClash :: Code.Source -> A.Region -> A.Region -> String -> Report.Report
 nameClash source r1 r2 messageThatEndsWithPunctuation =
   Report.Report "NAME CLASH" r2 [] $
-    Report.toCodePair source r1 r2
+    Code.toPair source r1 r2
       (
-        H.reflow messageThatEndsWithPunctuation
+        D.reflow messageThatEndsWithPunctuation
       ,
         "How can I know which one you want? Rename one of them!"
       )
       (
-        H.reflow (messageThatEndsWithPunctuation <> " One here:")
+        D.reflow (messageThatEndsWithPunctuation <> " One here:")
       ,
         "And another one here:"
       ,
@@ -972,28 +976,32 @@ nameClash source r1 r2 messageThatEndsWithPunctuation =
 -- AMBIGUOUS NAME
 
 
-ambiguousName :: Code.Source -> R.Region -> Maybe N.Name -> N.Name -> [ModuleName.Canonical] -> String -> Report.Report
-ambiguousName source region maybePrefix name possibleHomes thing =
+ambiguousName :: Code.Source -> A.Region -> Maybe Name.Name -> Name.Name -> ModuleName.Canonical -> OneOrMore.OneOrMore ModuleName.Canonical -> String -> Report.Report
+ambiguousName source region maybePrefix name h hs thing =
+  let
+    possibleHomes = List.sort (h : OneOrMore.destruct (:) hs)
+  in
   Report.Report "AMBIGUOUS NAME" region [] $
-    Report.toCodeSnippet source region Nothing $
+    Code.toSnippet source region Nothing $
       case maybePrefix of
         Nothing ->
           let
             homeToYellowDoc (ModuleName.Canonical _ home) =
-              H.dullyellow (H.nameToDoc home)
-
-            bothOrAll =
-              if length possibleHomes == 2 then "both" else "all"
+              D.dullyellow (D.fromName home <> "." <> D.fromName name)
           in
           (
-            H.reflow $ "This usage of `" ++ N.toString name ++ "` is ambiguous."
+            D.reflow $ "This usage of `" ++ Name.toChars name ++ "` is ambiguous:"
           ,
-            H.stack
-              [ H.reflow $
-                  "Check your imports. The following modules " ++ bothOrAll
-                  ++ " expose a `" ++ N.toString name ++ "` " ++ thing ++ ":"
-              , H.indent 4 $ H.vcat $ map homeToYellowDoc possibleHomes
-              , H.reflowLink "Read" "imports" "to learn how to clarify which one you want."
+            D.stack
+              [ D.reflow $
+                  "This name is exposed by " ++ show (length possibleHomes) ++ " of your imports, so I am not\
+                  \ sure which one to use:"
+              , D.indent 4 $ D.vcat $ map homeToYellowDoc possibleHomes
+              , D.reflow $
+                  "I recommend using qualified names for imported values. I also recommend having\
+                  \ at most one `exposing (..)` per file to make name clashes like this less common\
+                  \ in the long run."
+              , D.link "Note" "Check out" "imports" "for more info on the import syntax."
               ]
           )
 
@@ -1001,22 +1009,22 @@ ambiguousName source region maybePrefix name possibleHomes thing =
           let
             homeToYellowDoc (ModuleName.Canonical _ home) =
               if prefix == home then
-                H.blue "import" <+> H.dullyellow (H.nameToDoc home)
+                D.cyan "import" <+> D.fromName home
               else
-                H.blue "import" <+> H.dullyellow (H.nameToDoc home) <+> H.blue "as" <+> H.dullyellow (H.nameToDoc prefix)
+                D.cyan "import" <+> D.fromName home <+> D.cyan "as" <+> D.fromName prefix
 
             eitherOrAny =
               if length possibleHomes == 2 then "either" else "any"
           in
           (
-            H.reflow $ "This usage of `" ++ toQualString prefix name ++ "` is ambiguous."
+            D.reflow $ "This usage of `" ++ toQualString prefix name ++ "` is ambiguous."
           ,
-            H.stack
-              [ H.reflow $
+            D.stack
+              [ D.reflow $
                   "It could refer to a " ++ thing ++ " from "
                   ++ eitherOrAny ++ " of these imports:"
-              , H.indent 4 $ H.vcat $ map homeToYellowDoc possibleHomes
-              , H.reflowLink "Read" "imports" "to learn how to clarify which one you want."
+              , D.indent 4 $ D.vcat $ map homeToYellowDoc possibleHomes
+              , D.reflowLink "Read" "imports" "to learn how to clarify which one you want."
               ]
           )
 
@@ -1025,42 +1033,42 @@ ambiguousName source region maybePrefix name possibleHomes thing =
 -- NOT FOUND
 
 
-notFound :: Code.Source -> R.Region -> Maybe N.Name -> N.Name -> String -> PossibleNames -> Report.Report
+notFound :: Code.Source -> A.Region -> Maybe Name.Name -> Name.Name -> String -> PossibleNames -> Report.Report
 notFound source region maybePrefix name thing (PossibleNames locals quals) =
   let
     givenName =
-      maybe N.toString toQualString maybePrefix name
+      maybe Name.toChars toQualString maybePrefix name
 
     possibleNames =
       let
         addQuals prefix localSet allNames =
           Set.foldr (\x xs -> toQualString prefix x : xs) allNames localSet
       in
-      Map.foldrWithKey addQuals (map N.toString (Set.toList locals)) quals
+      Map.foldrWithKey addQuals (map Name.toChars (Set.toList locals)) quals
 
     nearbyNames =
-      take 4 (H.nearbyNames id givenName possibleNames)
+      take 4 (Suggest.sort givenName id possibleNames)
 
     toDetails noSuggestionDetails yesSuggestionDetails =
       case nearbyNames of
         [] ->
-          H.stack
-            [ H.reflow noSuggestionDetails
-            , H.link "Hint" "Read" "imports" "to see how `import` declarations work in Elm."
+          D.stack
+            [ D.reflow noSuggestionDetails
+            , D.link "Hint" "Read" "imports" "to see how `import` declarations work in Elm."
             ]
 
         suggestions ->
-          H.stack
-            [ H.reflow yesSuggestionDetails
-            , H.indent 4 $ H.vcat $ map H.dullyellow $ map H.text suggestions
-            , H.link "Hint" "Read" "imports" "to see how `import` declarations work in Elm."
+          D.stack
+            [ D.reflow yesSuggestionDetails
+            , D.indent 4 $ D.vcat $ map D.dullyellow $ map D.fromChars suggestions
+            , D.link "Hint" "Read" "imports" "to see how `import` declarations work in Elm."
             ]
 
   in
   Report.Report "NAMING ERROR" region nearbyNames $
-    Report.toCodeSnippet source region Nothing
+    Code.toSnippet source region Nothing
       (
-        H.reflow $
+        D.reflow $
           "I cannot find a `" ++ givenName ++ "` " ++ thing ++ ":"
       ,
         case maybePrefix of
@@ -1073,19 +1081,19 @@ notFound source region maybePrefix name thing (PossibleNames locals quals) =
             case Map.lookup prefix quals of
               Nothing ->
                 toDetails
-                  ("I cannot find a `" ++ N.toString prefix ++ "` module. Is there an `import` for it?")
-                  ("I cannot find a `" ++ N.toString prefix ++ "` import. These names seem close though:")
+                  ("I cannot find a `" ++ Name.toChars prefix ++ "` module. Is there an `import` for it?")
+                  ("I cannot find a `" ++ Name.toChars prefix ++ "` import. These names seem close though:")
 
               Just _ ->
                 toDetails
-                  ("The `" ++ N.toString prefix ++ "` module does not expose a `" ++ N.toString name ++ "` " ++ thing ++ ".")
-                  ("The `" ++ N.toString prefix ++ "` module does not expose a `" ++ N.toString name ++ "` " ++ thing ++ ". These names seem close though:")
+                  ("The `" ++ Name.toChars prefix ++ "` module does not expose a `" ++ Name.toChars name ++ "` " ++ thing ++ ".")
+                  ("The `" ++ Name.toChars prefix ++ "` module does not expose a `" ++ Name.toChars name ++ "` " ++ thing ++ ". These names seem close though:")
       )
 
 
-toQualString :: N.Name -> N.Name -> String
+toQualString :: Name.Name -> Name.Name -> String
 toQualString prefix name =
-  N.toString prefix ++ "." ++ N.toString name
+  Name.toChars prefix ++ "." ++ Name.toChars name
 
 
 
@@ -1096,20 +1104,20 @@ varErrorToReport :: VarError -> Report.Report
 varErrorToReport (VarError kind name problem suggestions) =
   let
     learnMore orMaybe =
-      H.reflow $
+      D.reflow $
         orMaybe <> " `import` works different than you expect? Learn all about it here: "
-        <> H.hintLink "imports"
+        <> D.hintLink "imports"
 
     namingError overview maybeStarter specializedSuggestions =
       Report.reportDoc "NAMING ERROR" Nothing overview $
-        case H.maybeYouWant' maybeStarter specializedSuggestions of
+        case D.maybeYouWant' maybeStarter specializedSuggestions of
           Nothing ->
             learnMore "Maybe"
           Just doc ->
-            H.stack [ doc, learnMore "Or maybe" ]
+            D.stack [ doc, learnMore "Or maybe" ]
 
     specialNamingError specialHint =
-      Report.reportDoc "NAMING ERROR" Nothing (cannotFind kind name) (H.hsep specialHint)
+      Report.reportDoc "NAMING ERROR" Nothing (cannotFind kind name) (D.hsep specialHint)
   in
   case problem of
     Ambiguous ->
@@ -1139,37 +1147,37 @@ varErrorToReport (VarError kind name problem suggestions) =
 cannotFind :: VarKind -> Text -> [Doc]
 cannotFind kind rawName =
   let ( a, thing, name ) = toKindInfo kind rawName in
-  [ "Cannot", "find", a, thing, "named", H.dullyellow name <> ":" ]
+  [ "Cannot", "find", a, thing, "named", D.dullyellow name <> ":" ]
 
 
 ambiguous :: VarKind -> Text -> [Doc]
 ambiguous kind rawName =
   let ( _a, thing, name ) = toKindInfo kind rawName in
-  [ "This", "usage", "of", "the", H.dullyellow name, thing, "is", "ambiguous." ]
+  [ "This", "usage", "of", "the", D.dullyellow name, thing, "is", "ambiguous." ]
 
 
 notEqualsHint :: Text -> [Doc]
 notEqualsHint op =
   [ "Looking", "for", "the", "“not", "equal”", "operator?", "The", "traditional"
-  , H.dullyellow $ text $ "(" <> op <> ")"
-  , "is", "replaced", "by", H.green "(/=)", "in", "Elm.", "It", "is", "meant"
+  , D.dullyellow $ text $ "(" <> op <> ")"
+  , "is", "replaced", "by", D.green "(/=)", "in", "Elm.", "It", "is", "meant"
   , "to", "look", "like", "the", "“not", "equal”", "sign", "from", "math!", "(≠)"
   ]
 
 
 equalsHint :: [Doc]
 equalsHint =
-  [ "A", "special", H.dullyellow "(===)", "operator", "is", "not", "needed"
-  , "in", "Elm.", "We", "use", H.green "(==)", "for", "everything!"
+  [ "A", "special", D.dullyellow "(===)", "operator", "is", "not", "needed"
+  , "in", "Elm.", "We", "use", D.green "(==)", "for", "everything!"
   ]
 
 
 modHint :: [Doc]
 modHint =
-  [ "Rather", "than", "a", H.dullyellow "(%)", "operator,"
-  , "Elm", "has", "a", H.green "modBy", "function."
+  [ "Rather", "than", "a", D.dullyellow "(%)", "operator,"
+  , "Elm", "has", "a", D.green "modBy", "function."
   , "Learn", "more", "here:"
-  , "<https://package.elm-lang.org/packages/elm-lang/core/latest/Basics#modBy>"
+  , "<https://package.elm-lang.org/packages/elm/core/latest/Basics#modBy>"
   ]
 
 
@@ -1179,7 +1187,7 @@ modHint =
 -- ARG MISMATCH
 
 
-_argMismatchReport :: Code.Source -> R.Region -> String -> N.Name -> Int -> Int -> Report.Report
+_argMismatchReport :: Code.Source -> A.Region -> String -> Name.Name -> Int -> Int -> Report.Report
 _argMismatchReport source region kind name expected actual =
   let
     numArgs =
@@ -1188,12 +1196,12 @@ _argMismatchReport source region kind name expected actual =
       <> " arguments"
   in
     Report.Report (map Char.toUpper numArgs) region [] $
-      Report.toCodeSnippet source region Nothing
+      Code.toSnippet source region Nothing
         (
-          H.reflow $
-            kind <> " " <> N.toString name <> " has " <> numArgs <> "."
+          D.reflow $
+            kind <> " " <> Name.toChars name <> " has " <> numArgs <> "."
         ,
-          H.reflow $
+          D.reflow $
             "Expecting " <> show expected <> ", but got " <> show actual <> "."
         )
 
@@ -1202,22 +1210,22 @@ _argMismatchReport source region kind name expected actual =
 -- BAD ALIAS RECURSION
 
 
-aliasRecursionReport :: Code.Source -> R.Region -> N.Name -> [N.Name] -> Src.Type -> [N.Name] -> Report.Report
+aliasRecursionReport :: Code.Source -> A.Region -> Name.Name -> [Name.Name] -> Src.Type -> [Name.Name] -> Report.Report
 aliasRecursionReport source region name args tipe others =
   case others of
     [] ->
       Report.Report "ALIAS PROBLEM" region [] $
-        Report.toCodeSnippet source region Nothing
+        Code.toSnippet source region Nothing
           (
             "This type alias is recursive, forming an infinite type!"
           ,
-            H.stack
-              [ H.reflow $
+            D.stack
+              [ D.reflow $
                   "When I expand a recursive type alias, it just keeps getting bigger and bigger.\
                   \ So dealiasing results in an infinitely large type! Try this instead:"
-              , H.indent 4 $
+              , D.indent 4 $
                   aliasToUnionDoc name args tipe
-              , H.link "Hint"
+              , D.link "Hint"
                   "This is kind of a subtle distinction. I suggested the naive fix, but I recommend reading"
                   "recursive-alias"
                   "for ideas on how to do better."
@@ -1226,28 +1234,28 @@ aliasRecursionReport source region name args tipe others =
 
     _ ->
       Report.Report "ALIAS PROBLEM" region [] $
-        Report.toCodeSnippet source region Nothing
+        Code.toSnippet source region Nothing
           (
             "This type alias is part of a mutually recursive set of type aliases."
           ,
-            H.stack
+            D.stack
               [ "It is part of this cycle of type aliases:"
-              , H.indent 4 (H.drawCycle (name:others))
-              , H.reflow $
+              , D.cycle 4 name others
+              , D.reflow $
                   "You need to convert at least one of these type aliases into a `type`."
-              , H.link "Note" "Read" "recursive-alias"
+              , D.link "Note" "Read" "recursive-alias"
                   "to learn why this `type` vs `type alias` distinction matters. It is subtle but important!"
               ]
           )
 
 
-aliasToUnionDoc :: N.Name -> [N.Name] -> Src.Type -> Doc
+aliasToUnionDoc :: Name.Name -> [Name.Name] -> Src.Type -> Doc
 aliasToUnionDoc name args tipe =
-  H.vcat
-    [ H.dullyellow $
-        "type" <+> H.nameToDoc name <+> (foldr (<+>) "=" (map H.nameToDoc args))
-    , H.green $
-        H.indent 4 (H.nameToDoc name)
-    , H.dullyellow $
-        H.indent 8 (RT.srcToDoc RT.App tipe)
+  D.vcat
+    [ D.dullyellow $
+        "type" <+> D.fromName name <+> (foldr (<+>) "=" (map D.fromName args))
+    , D.green $
+        D.indent 4 (D.fromName name)
+    , D.dullyellow $
+        D.indent 8 (RT.srcToDoc RT.App tipe)
     ]

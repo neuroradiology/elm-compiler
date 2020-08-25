@@ -33,15 +33,14 @@ import Control.Monad.State.Strict (StateT, liftIO)
 import qualified Control.Monad.State.Strict as State
 import Data.Foldable (foldrM)
 import qualified Data.Map.Strict as Map
+import qualified Data.Name as Name
 import Data.Word (Word32)
 
 import qualified AST.Canonical as Can
-import qualified AST.Module.Name as ModuleName
 import qualified AST.Utils.Type as Type
-import qualified Elm.Name as N
+import qualified Elm.ModuleName as ModuleName
 import qualified Reporting.Annotation as A
 import qualified Reporting.Error.Type as E
-import qualified Reporting.Region as R
 import qualified Type.Error as ET
 import qualified Type.UnionFind as UF
 
@@ -53,21 +52,15 @@ import qualified Type.UnionFind as UF
 data Constraint
   = CTrue
   | CSaveTheEnvironment
-  | CEqual R.Region E.Category Type (E.Expected Type)
-  | CLocal R.Region N.Name (E.Expected Type)
-  | CForeign R.Region N.Name Can.Annotation (E.Expected Type)
-  | CPattern R.Region E.PCategory Type (E.PExpected Type)
+  | CEqual A.Region E.Category Type (E.Expected Type)
+  | CLocal A.Region Name.Name (E.Expected Type)
+  | CForeign A.Region Name.Name Can.Annotation (E.Expected Type)
+  | CPattern A.Region E.PCategory Type (E.PExpected Type)
   | CAnd [Constraint]
-  | CBranch
-      { _a :: Type
-      , _b :: Type
-      , _eq :: Constraint
-      , _neq :: IO Constraint
-      }
   | CLet
       { _rigidVars :: [Variable]
       , _flexVars :: [Variable]
-      , _header :: Map.Map N.Name (A.Located Type)
+      , _header :: Map.Map Name.Name (A.Located Type)
       , _headerCon :: Constraint
       , _bodyCon :: Constraint
       }
@@ -87,22 +80,22 @@ type Variable =
 
 
 data FlatType
-    = App1 ModuleName.Canonical N.Name [Variable]
+    = App1 ModuleName.Canonical Name.Name [Variable]
     | Fun1 Variable Variable
     | EmptyRecord1
-    | Record1 (Map.Map N.Name Variable) Variable
+    | Record1 (Map.Map Name.Name Variable) Variable
     | Unit1
     | Tuple1 Variable Variable (Maybe Variable)
 
 
 data Type
-    = PlaceHolder N.Name
-    | AliasN ModuleName.Canonical N.Name [(N.Name, Type)] Type
+    = PlaceHolder Name.Name
+    | AliasN ModuleName.Canonical Name.Name [(Name.Name, Type)] Type
     | VarN Variable
-    | AppN ModuleName.Canonical N.Name [Type]
+    | AppN ModuleName.Canonical Name.Name [Type]
     | FunN Type Type
     | EmptyRecordN
-    | RecordN (Map.Map N.Name Type) Type
+    | RecordN (Map.Map Name.Name Type) Type
     | UnitN
     | TupleN Type Type (Maybe Type)
 
@@ -121,12 +114,12 @@ data Descriptor =
 
 
 data Content
-    = FlexVar (Maybe N.Name)
-    | FlexSuper SuperType (Maybe N.Name)
-    | RigidVar N.Name
-    | RigidSuper SuperType N.Name
+    = FlexVar (Maybe Name.Name)
+    | FlexSuper SuperType (Maybe Name.Name)
+    | RigidVar Name.Name
+    | RigidSuper SuperType Name.Name
     | Structure FlatType
-    | Alias ModuleName.Canonical N.Name [(N.Name,Variable)] Variable
+    | Alias ModuleName.Canonical Name.Name [(Name.Name,Variable)] Variable
     | Error
 
 
@@ -259,7 +252,7 @@ mat4 = AppN ModuleName.matrix4 "Mat4" []
 
 {-# NOINLINE texture #-}
 texture :: Type
-texture = AppN ModuleName.webgl "Texture" []
+texture = AppN ModuleName.texture "Texture" []
 
 
 
@@ -307,30 +300,30 @@ unnamedFlexSuper super =
 -- MAKE NAMED VARIABLES
 
 
-nameToFlex :: N.Name -> IO Variable
+nameToFlex :: Name.Name -> IO Variable
 nameToFlex name =
   UF.fresh $ makeDescriptor $
     maybe FlexVar FlexSuper (toSuper name) (Just name)
 
 
-nameToRigid :: N.Name -> IO Variable
+nameToRigid :: Name.Name -> IO Variable
 nameToRigid name =
   UF.fresh $ makeDescriptor $
     maybe RigidVar RigidSuper (toSuper name) name
 
 
-toSuper :: N.Name -> Maybe SuperType
+toSuper :: Name.Name -> Maybe SuperType
 toSuper name =
-  if N.startsWith "number" name then
+  if Name.isNumberType name then
       Just Number
 
-  else if N.startsWith "comparable" name then
+  else if Name.isComparableType name then
       Just Comparable
 
-  else if N.startsWith "appendable" name then
+  else if Name.isAppendableType name then
       Just Appendable
 
-  else if N.startsWith "compappend" name then
+  else if Name.isCompappendType name then
       Just CompAppend
 
   else
@@ -344,9 +337,9 @@ toSuper name =
 toAnnotation :: Variable -> IO Can.Annotation
 toAnnotation variable =
   do  userNames <- getVarNames variable Map.empty
-      (tipe, NameState allNames _ _ _ _ _) <-
+      (tipe, NameState freeVars _ _ _ _ _) <-
         State.runStateT (variableToCanType variable) (makeNameState userNames)
-      return $ Can.Forall (Map.map (const ()) allNames) tipe
+      return $ Can.Forall freeVars tipe
 
 
 variableToCanType :: Variable -> StateT NameState IO Can.Type
@@ -406,7 +399,7 @@ termToCanType term =
       return $ Can.TRecord Map.empty Nothing
 
     Record1 fields extension ->
-      do  canFields <- traverse variableToCanType fields
+      do  canFields <- traverse fieldToCanType fields
           canExt <- Type.iteratedDealias <$> variableToCanType extension
           return $
               case canExt of
@@ -427,6 +420,12 @@ termToCanType term =
         <$> variableToCanType a
         <*> variableToCanType b
         <*> traverse variableToCanType maybeC
+
+
+fieldToCanType :: Variable -> StateT NameState IO Can.FieldType
+fieldToCanType variable =
+  do  tipe <- variableToCanType variable
+      return (Can.FieldType 0 tipe)
 
 
 
@@ -557,7 +556,7 @@ termToErrorType term =
 
 data NameState =
   NameState
-    { _taken :: TakenNames
+    { _taken :: Map.Map Name.Name ()
     , _normals :: Int
     , _numbers :: Int
     , _comparables :: Int
@@ -566,24 +565,41 @@ data NameState =
     }
 
 
-type TakenNames = Map.Map N.Name Variable
-
-
-makeNameState :: TakenNames -> NameState
+makeNameState :: Map.Map Name.Name Variable -> NameState
 makeNameState taken =
-  NameState taken 0 0 0 0 0
+  NameState (Map.map (const ()) taken) 0 0 0 0 0
 
 
-getFreshVarName :: (Monad m) => StateT NameState m N.Name
+
+-- FRESH VAR NAMES
+
+
+getFreshVarName :: (Monad m) => StateT NameState m Name.Name
 getFreshVarName =
   do  index <- State.gets _normals
       taken <- State.gets _taken
-      let (uniqueName, newIndex) = getFreshNormal index taken
-      State.modify (\state -> state { _normals = newIndex })
-      return uniqueName
+      let (name, newIndex, newTaken) = getFreshVarNameHelp index taken
+      State.modify $ \state -> state { _taken = newTaken, _normals = newIndex }
+      return name
 
 
-getFreshSuperName :: (Monad m) => SuperType -> StateT NameState m N.Name
+getFreshVarNameHelp :: Int -> Map.Map Name.Name () -> (Name.Name, Int, Map.Map Name.Name ())
+getFreshVarNameHelp index taken =
+  let
+    name =
+      Name.fromTypeVariableScheme index
+  in
+  if Map.member name taken then
+    getFreshVarNameHelp (index + 1) taken
+  else
+    ( name, index + 1, Map.insert name () taken )
+
+
+
+-- FRESH SUPER NAMES
+
+
+getFreshSuperName :: (Monad m) => SuperType -> StateT NameState m Name.Name
 getFreshSuperName super =
   case super of
     Number ->
@@ -599,54 +615,33 @@ getFreshSuperName super =
       getFreshSuper "compappend" _compAppends (\index state -> state { _compAppends = index })
 
 
-getFreshNormal :: Int -> TakenNames -> (N.Name, Int)
-getFreshNormal index taken =
-  let
-    (postfix, letter) =
-      quotRem index 26
-
-    chr = N.fromLetter letter
-    name = if postfix <= 0 then chr else N.addIndex chr postfix
-  in
-    if Map.member name taken then
-      getFreshNormal (index + 1) taken
-
-    else
-      (name, index + 1)
-
-
-getFreshSuper
-    :: (Monad m)
-    => N.Name
-    -> (NameState -> Int)
-    -> (Int -> NameState -> NameState)
-    -> StateT NameState m N.Name
-getFreshSuper name getter setter =
+getFreshSuper :: (Monad m) => Name.Name -> (NameState -> Int) -> (Int -> NameState -> NameState) -> StateT NameState m Name.Name
+getFreshSuper prefix getter setter =
   do  index <- State.gets getter
       taken <- State.gets _taken
-      let (uniqueName, newIndex) = getFreshSuperHelp name index taken
-      State.modify (setter newIndex)
-      return uniqueName
+      let (name, newIndex, newTaken) = getFreshSuperHelp prefix index taken
+      State.modify (\state -> setter newIndex state { _taken = newTaken })
+      return name
 
 
-getFreshSuperHelp :: N.Name -> Int -> TakenNames -> (N.Name, Int)
-getFreshSuperHelp name index taken =
+getFreshSuperHelp :: Name.Name -> Int -> Map.Map Name.Name () -> (Name.Name, Int, Map.Map Name.Name ())
+getFreshSuperHelp prefix index taken =
   let
-    newName =
-      if index <= 0 then name else N.addIndex name index
+    name =
+      Name.fromTypeVariable prefix index
   in
-    if Map.member newName taken then
-      getFreshSuperHelp name (index + 1) taken
+    if Map.member name taken then
+      getFreshSuperHelp prefix (index + 1) taken
 
     else
-      (newName, index + 1)
+      ( name, index + 1, Map.insert name () taken )
 
 
 
 -- GET ALL VARIABLE NAMES
 
 
-getVarNames :: Variable -> TakenNames -> IO TakenNames
+getVarNames :: Variable -> Map.Map Name.Name Variable -> IO (Map.Map Name.Name Variable)
 getVarNames var takenNames =
   do  (Descriptor content rank mark copy) <- UF.get var
       if mark == getVarNamesMark
@@ -711,14 +706,11 @@ getVarNames var takenNames =
 -- REGISTER NAME / RENAME DUPLICATES
 
 
-addName :: Int -> N.Name -> Variable -> (N.Name -> Content) -> TakenNames -> IO TakenNames
+addName :: Int -> Name.Name -> Variable -> (Name.Name -> Content) -> Map.Map Name.Name Variable -> IO (Map.Map Name.Name Variable)
 addName index givenName var makeContent takenNames =
   let
     indexedName =
-      if index <= 0 then
-        givenName
-      else
-        N.addSafeIndex givenName index
+      Name.fromTypeVariable givenName index
   in
     case Map.lookup indexedName takenNames of
       Nothing ->
